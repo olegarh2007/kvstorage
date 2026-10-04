@@ -1,0 +1,5 @@
+снапшот хранится в формате key_size, key, value_size, value на каждое вхождение map
+
+wal: если put: то код операции, keysize, key, valuesize, value. delete - код операции, keysize, key
+
+добавил тесты и бенчмарк: его результат 11016 ms

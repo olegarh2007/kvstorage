@@ -1,0 +1,75 @@
+---
+Language: Cpp
+BasedOnStyle: Google
+Standard: Latest
+
+# --- Отступы ---
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+ConstructorInitializerIndentWidth: 4
+AccessModifierOffset: -4
+IndentCaseLabels: true
+NamespaceIndentation: None
+FixNamespaceComments: true
+
+# --- Ширина строки ---
+ColumnLimit: 100
+ReflowComments: true
+
+# --- Фигурные скобки ---
+BreakBeforeBraces: Attach
+
+# --- Указатели и ссылки: int* p, const T& r ---
+PointerAlignment: Left
+DerivePointerAlignment: false
+
+# --- Короткие конструкции в одну строку ---
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortLambdasOnASingleLine: All
+
+# --- Переносы аргументов и параметров ---
+AlignAfterOpenBracket: Align
+BinPackArguments: false
+BinPackParameters: false
+AlignTrailingComments: true
+AlignOperands: Align
+BreakBeforeBinaryOperators: None
+BreakConstructorInitializers: BeforeColon
+PackConstructorInitializers: NextLine
+
+# --- Пробелы ---
+SpaceBeforeParens: ControlStatements
+SpacesInAngles: Never
+SpacesBeforeTrailingComments: 2
+Cpp11BracedListStyle: true
+
+# --- Пустые строки ---
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: false
+EmptyLineBeforeAccessModifier: LogicalBlock
+
+# --- Инклюды ---
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeIsMainRegex: '([-_](test|unittest))?$'
+IncludeCategories:
+  # 1. Заголовок, соответствующий текущему .cpp (main include) — приоритет 1 выставляется автоматически
+  # 2. Системные C-заголовки: <stdio.h>, <sys/types.h>
+  - Regex: '^<.*\.h>'
+    Priority: 2
+  # 3. Стандартная библиотека C++: <vector>, <string>
+  - Regex: '^<[^.]+>'
+    Priority: 3
+  # 4. Сторонние библиотеки: <boost/...>, <fmt/core.h>
+  - Regex: '^<.*'
+    Priority: 4
+  # 5. Заголовки проекта: "foo/bar.h"
+  - Regex: '.*'
+    Priority: 5
+...

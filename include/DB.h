@@ -7,8 +7,11 @@
 #include <map>
 #include <optional>
 #include <string>
-#include <iostream>
-#include <fstream>
+
+#include "snapshot.h"
+#include "wal.h"
+
+#define MAX_WAL_SIZE 20
 
 class DB {
 public:
@@ -18,10 +21,10 @@ public:
     std::optional<std::string> get(const std::string& key);
     void remove(const std::string& key);
 
-    void flush();
 private:
     std::map<std::string, std::string> _map;
-    std::ofstream _journal;
+    Snapshot _snapshot;
+    Wal _wal;
 };
 
-#endif //KVSTORAGE_DB_H
+#endif  // KVSTORAGE_DB_H
