@@ -4,14 +4,10 @@
 
 #ifndef KVSTORAGE_DB_H
 #define KVSTORAGE_DB_H
-#include <map>
 #include <optional>
 #include <string>
 
-#include "snapshot.h"
-#include "wal.h"
-
-#define MAX_WAL_SIZE 20
+#include "sstable.h"
 
 class DB {
 public:
@@ -22,9 +18,7 @@ public:
     void remove(const std::string& key);
 
 private:
-    std::map<std::string, std::string> _map;
-    Snapshot _snapshot;
-    Wal _wal;
+    SSTable _sstable;
 };
 
 #endif  // KVSTORAGE_DB_H

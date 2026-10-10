@@ -5,8 +5,6 @@ set(CMAKE_CXX_STANDARD 20)
 
 add_library(kvstorage STATIC
         src/DB.cpp
-        src/wal.cpp
-        src/snapshot.cpp
 )
 
 target_include_directories(kvstorage
@@ -25,13 +23,8 @@ FetchContent_MakeAvailable(googletest)
 
 enable_testing()
 
-add_executable(kv
-        tests/wal_test.cpp
-        tests/snapshot_test.cpp)
-
 add_executable(kvstorage_tests
-        tests/wal_test.cpp
-        tests/snapshot_test.cpp
+        tests/sstable_test.cpp
 )
 
 target_link_libraries(
@@ -66,5 +59,4 @@ target_link_libraries(
         kvstorage
         benchmark::benchmark_main
 )
-
 
