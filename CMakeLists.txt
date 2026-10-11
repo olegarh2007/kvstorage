@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 
 add_library(kvstorage STATIC
         src/DB.cpp
+        src/wal.cpp
 )
 
 target_include_directories(kvstorage

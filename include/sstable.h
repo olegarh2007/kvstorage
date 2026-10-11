@@ -13,10 +13,8 @@
 
 class SSTable {
 public:
-    static constexpr std::size_t MAX_MEMTABLE_SIZE = 20;
-
     // The pair holds the value and a flag: true = added, false = deleted.
-    std::map<std::string, std::pair<std::string, bool>> MemTable;
+    using Entries = std::map<std::string, std::pair<std::string, bool>>;
 
     SSTable() {
         if (std::filesystem::exists("MANIFEST")) {
@@ -32,14 +30,10 @@ public:
         }
     }
 
-    void put(std::string key, std::string value) {
-        MemTable.insert_or_assign(std::move(key), std::make_pair(std::move(value), true));
-        flushIfNeeded();
-    }
-
-    void remove(std::string key) {
-        MemTable.insert_or_assign(std::move(key), std::make_pair(std::string{}, false));
-        flushIfNeeded();
+    void flush(const Entries& entries) {
+        save("ss" + std::to_string(files_count), entries);
+        writeManifest(files_count + 1);
+        ++files_count;
     }
 
     // Format (integers use native byte order):
@@ -47,16 +41,16 @@ public:
     // Each offset is absolute and points to a record's presence flag.
     // Record: uint8_t added, uint64_t keySize, key bytes.
     // If added == 1, append uint64_t valueSize and value bytes.
-    void save(const std::filesystem::path& path) const {
+    void save(const std::filesystem::path& path, const Entries& entries) const {
         std::ofstream file;
         file.exceptions(std::ios::failbit | std::ios::badbit);
         file.open(path, std::ios::binary | std::ios::trunc);
 
-        const auto count = static_cast<std::uint64_t>(MemTable.size());
+        const auto count = static_cast<std::uint64_t>(entries.size());
         file.write(reinterpret_cast<const char*>(&count), sizeof(count));
 
         std::uint64_t offset = sizeof(count) + count * sizeof(std::uint64_t);
-        for (const auto& [key, value] : MemTable) {
+        for (const auto& [key, value] : entries) {
             file.write(reinterpret_cast<const char*>(&offset), sizeof(offset));
             offset += sizeof(std::uint8_t) + sizeof(std::uint64_t) + key.size();
             if (value.second) {
@@ -64,7 +58,7 @@ public:
             }
         }
 
-        for (const auto& [key, value] : MemTable) {
+        for (const auto& [key, value] : entries) {
             const std::uint8_t flag = value.second ? 1 : 0;
             const auto length = static_cast<std::uint64_t>(key.size());
             file.write(reinterpret_cast<const char*>(&flag), sizeof(flag));
@@ -80,13 +74,6 @@ public:
     }
 
     std::optional<std::string> get(const std::string& key) const {
-        const auto entry = MemTable.find(key);
-        if (entry != MemTable.end()) {
-            if (entry->second.second) {
-                return entry->second.first;
-            }
-            return std::nullopt;
-        }
         return getFromFile(key, files_count - 1);
     }
 
@@ -155,16 +142,6 @@ private:
         manifest.close();
     }
 
-    void flushIfNeeded() {
-        if (MemTable.size() < MAX_MEMTABLE_SIZE) {
-            return;
-        }
-
-        save("ss" + std::to_string(files_count));
-        writeManifest(files_count + 1);
-        ++files_count;
-        MemTable.clear();
-    }
 };
 
 #endif  // KVSTORAGE_SSTABLE_H
