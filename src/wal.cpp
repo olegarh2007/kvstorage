@@ -60,65 +60,69 @@ bool readString(std::istream& in, std::uint64_t& remaining, std::string& str) {
 
 Wal::Wal(std::string path, std::map<std::string, std::pair<std::string, bool>>& map)
     : _path(std::move(path)) {
-    if (!std::filesystem::exists(_path)) {
-        return;
-    }
-    std::ifstream in(_path, std::ios::binary | std::ios::ate);
-    if (!in) {
-        throw std::runtime_error("Failed to open WAL for reading: " + _path);
-    }
-    const auto fileSize = in.tellg();
-    if (fileSize < 0) {
-        throw std::runtime_error("Failed to determine WAL size: " + _path);
-    }
-    in.seekg(0);
-    if (!in) {
-        throw std::runtime_error("Failed to seek WAL: " + _path);
-    }
-    auto remaining = static_cast<std::uint64_t>(fileSize);
-    std::uint64_t completeBytes = 0;
-    while (remaining != 0) {
-        std::uint8_t code = 0;
-        in.read(reinterpret_cast<char*>(&code), sizeof(code));
-        --remaining;
+    if (std::filesystem::exists(_path)) {
+        std::ifstream in(_path, std::ios::binary | std::ios::ate);
         if (!in) {
-            throw std::runtime_error("Failed to read WAL operation");
+            throw std::runtime_error("Failed to open WAL for reading: " + _path);
         }
-        if (code != static_cast<std::uint8_t>(Operation::Put) &&
-            code != static_cast<std::uint8_t>(Operation::Delete)) {
-            throw std::runtime_error("Invalid WAL operation");
+        const auto fileSize = in.tellg();
+        if (fileSize < 0) {
+            throw std::runtime_error("Failed to determine WAL size: " + _path);
         }
-        std::string key;
-        if (!readString(in, remaining, key)) {
-            break;
+        in.seekg(0);
+        if (!in) {
+            throw std::runtime_error("Failed to seek WAL: " + _path);
         }
-        if (code == static_cast<std::uint8_t>(Operation::Put)) {
-            std::string value;
-            if (!readString(in, remaining, value)) {
+        auto remaining = static_cast<std::uint64_t>(fileSize);
+        std::uint64_t completeBytes = 0;
+        while (remaining != 0) {
+            std::uint8_t code = 0;
+            in.read(reinterpret_cast<char*>(&code), sizeof(code));
+            --remaining;
+            if (!in) {
+                throw std::runtime_error("Failed to read WAL operation");
+            }
+            if (code != static_cast<std::uint8_t>(Operation::Put) &&
+                code != static_cast<std::uint8_t>(Operation::Delete)) {
+                throw std::runtime_error("Invalid WAL operation");
+            }
+            std::string key;
+            if (!readString(in, remaining, key)) {
                 break;
             }
-            map.insert_or_assign(std::move(key), std::make_pair(std::move(value), true));
-        } else {
-            map.insert_or_assign(std::move(key), std::make_pair(std::string{}, false));
+            if (code == static_cast<std::uint8_t>(Operation::Put)) {
+                std::string value;
+                if (!readString(in, remaining, value)) {
+                    break;
+                }
+                map.insert_or_assign(std::move(key), std::make_pair(std::move(value), true));
+            } else {
+                map.insert_or_assign(std::move(key), std::make_pair(std::string{}, false));
+            }
+            ++_size;
+            completeBytes = static_cast<std::uint64_t>(fileSize) - remaining;
         }
-        ++_size;
-        completeBytes = static_cast<std::uint64_t>(fileSize) - remaining;
+        if (completeBytes < static_cast<std::uint64_t>(fileSize)) {
+            // Remove the incomplete tail before any new records are appended.
+            in.close();
+            std::filesystem::resize_file(_path, completeBytes);
+        }
     }
-    if (completeBytes < static_cast<std::uint64_t>(fileSize)) {
-        // Remove the incomplete tail before any new records are appended.
-        in.close();
-        std::filesystem::resize_file(_path, completeBytes);
+
+    _out.open(_path, std::ios::binary | std::ios::app);
+    if (!_out) {
+        throw std::runtime_error("Failed to open WAL for writing: " + _path);
     }
 }
 
 void Wal::clear() {
-    std::ofstream out(_path, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        throw std::runtime_error("Failed to clear WAL: " + _path);
-    }
-    out.close();
-    if (!out) {
+    _out.close();
+    if (!_out) {
         throw std::runtime_error("Failed to close WAL: " + _path);
+    }
+    _out.open(_path, std::ios::binary | std::ios::trunc);
+    if (!_out) {
+        throw std::runtime_error("Failed to clear WAL: " + _path);
     }
     _size = 0;
 }
@@ -141,24 +145,19 @@ void Wal::write(Operation operation, std::string_view key, std::string_view valu
         checkSize(value);
     }
 
-    std::ofstream out(_path, std::ios::binary | std::ios::app);
-    if (!out) {
-        throw std::runtime_error("Failed to open WAL for writing: " + _path);
-    }
-
     const auto code = static_cast<std::uint8_t>(operation);
-    out.write(reinterpret_cast<const char*>(&code), sizeof(code));
-    if (!out) {
+    _out.write(reinterpret_cast<const char*>(&code), sizeof(code));
+    if (!_out) {
         throw std::runtime_error("Failed to write WAL operation");
     }
-    writeString(out, key);
+    writeString(_out, key);
     if (operation == Operation::Put) {
-        writeString(out, value);
+        writeString(_out, value);
     }
 
-    out.close();
-    if (!out) {
-        throw std::runtime_error("Failed to close WAL: " + _path);
+    _out.flush();
+    if (!_out) {
+        throw std::runtime_error("Failed to flush WAL: " + _path);
     }
     ++_size;
 }

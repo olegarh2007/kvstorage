@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <map>
 #include <string>
 #include <string_view>
@@ -54,6 +55,7 @@ private:
     void write(Operation operation, std::string_view key, std::string_view value);
 
     std::string _path;
+    std::ofstream _out;
     std::size_t _size = 0;
 };
 
