@@ -26,7 +26,7 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 
 add_executable(kvstorage_tests
-        tests/sstable_test.cpp
+        tests/wal_test.cpp
 )
 
 target_link_libraries(
@@ -61,4 +61,3 @@ target_link_libraries(
         kvstorage
         benchmark::benchmark_main
 )
-

@@ -5,14 +5,14 @@
 #ifndef KVSTORAGE_WAL_H
 #define KVSTORAGE_WAL_H
 
-#include "file.h"
-
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <string>
 #include <string_view>
 #include <utility>
+
+#include "file.h"
 
 // Формат WAL: записи идут подряд, без заголовка файла и разделителей.
 //
@@ -42,10 +42,14 @@ public:
 
     // Replay complete records in order, retaining deletion markers for SSTables.
     // Truncate an incomplete final record before accepting new writes.
-    Wal(std::string path, std::map<std::string, std::pair<std::string, bool>>& map);
+    Wal(std::string path,
+        std::map<std::string, std::pair<std::string, bool>>& map,
+        FileFactory factory = {});
 
-    // Append a record; sizes are uint64_t in native byte order.
-    void put(std::string_view key, std::string_view value);
+    // при успешном выполнении запись сохраняется в wal
+    // и гарантированно переживает сбой
+    // пока не удалена последущей операцией
+    void append(std::string_view key, std::string_view value);
     void remove(std::string_view key);
     void clear();
 
@@ -56,7 +60,8 @@ private:
     void write(Operation operation, std::string_view key, std::string_view value);
 
     std::string _path;
-    File _out;
+    FileFactory _fileFactory;
+    std::unique_ptr<File> _out;
     std::size_t _size = 0;
 };
 

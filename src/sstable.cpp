@@ -1,7 +1,7 @@
 #include "sstable.h"
 
 #include <algorithm>
-#include <fstream>
+#include <sstream>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -9,31 +9,30 @@
 namespace {
 
 template <typename T>
-T read(std::istream& file) {
+T read(File& file) {
     T value;
-    file.read(reinterpret_cast<char*>(&value), sizeof(value));
+    file.read(&value, sizeof(value));
     return value;
 }
 
 template <typename T>
-void write(std::ostream& file, T value) {
-    file.write(reinterpret_cast<const char*>(&value), sizeof(value));
+void write(File& file, T value) {
+    file.write(&value, sizeof(value));
 }
 
-std::string readString(std::istream& file) {
+std::string readString(File& file) {
     const auto size = read<std::uint64_t>(file);
-    if (size > std::string().max_size() ||
-        size > static_cast<std::uint64_t>(std::numeric_limits<std::streamsize>::max())) {
+    if (size > std::string().max_size()) {
         throw std::runtime_error("Invalid SSTable string size");
     }
     std::string value(static_cast<std::size_t>(size), '\0');
-    file.read(value.data(), static_cast<std::streamsize>(size));
+    file.read(value.data(), value.size());
     return value;
 }
 
-void writeString(std::ostream& file, const std::string& value) {
+void writeString(File& file, const std::string& value) {
     write(file, static_cast<std::uint64_t>(value.size()));
-    file.write(value.data(), static_cast<std::streamsize>(value.size()));
+    file.write(value.data(), value.size());
 }
 
 struct Record {
@@ -42,7 +41,7 @@ struct Record {
     bool added;
 };
 
-Record readRecord(std::istream& file) {
+Record readRecord(File& file) {
     const auto flag = read<std::uint8_t>(file);
     if (flag > 1) {
         throw std::runtime_error("Invalid SSTable presence flag");
@@ -54,7 +53,7 @@ Record readRecord(std::istream& file) {
     return record;
 }
 
-void writeRecord(std::ostream& file, const Record& record) {
+void writeRecord(File& file, const Record& record) {
     write(file, static_cast<std::uint8_t>(record.added));
     writeString(file, record.key);
     if (record.added) {
@@ -64,11 +63,10 @@ void writeRecord(std::ostream& file, const Record& record) {
 
 class Reader {
 public:
-    explicit Reader(std::ifstream& input) : file(input) {
-        file.clear();
-        file.seekg(0);
+    explicit Reader(File& input) : file(input) {
+        file.seek(0);
         remaining = read<std::uint64_t>(file);
-        file.seekg(static_cast<std::streamoff>(sizeof(std::uint64_t) * (remaining + 1)));
+        file.seek(static_cast<off_t>(sizeof(std::uint64_t) * (remaining + 1)));
         advance();
     }
 
@@ -84,14 +82,12 @@ public:
     std::optional<Record> current;
 
 private:
-    std::ifstream& file;
+    File& file;
     std::uint64_t remaining;
 };
 
 template <typename Emit>
-void mergeRecords(std::ifstream& left,
-                  std::ifstream& right,
-                  Emit emit) {
+void mergeRecords(File& left, File& right, Emit emit) {
     Reader older(left);
     Reader newer(right);
     while (older.current || newer.current) {
@@ -110,31 +106,34 @@ void mergeRecords(std::ifstream& left,
 
 }  // namespace
 
-SSTable::SSTable() {
-    if (!std::filesystem::exists("MANIFEST")) {
+SSTable::SSTable(FileFactory factory) : _fileFactory(std::move(factory)) {
+    if (!_fileFactory.exists("MANIFEST")) {
         writeManifest(next_id, levels);
         return;
     }
-    std::ifstream manifest("MANIFEST");
+    auto manifest = _fileFactory.create("MANIFEST", "r");
+    std::string content(static_cast<std::size_t>(manifest->size()), '\0');
+    manifest->read(content.data(), content.size());
+    std::istringstream input(content);
     std::uint64_t count;
-    if (!(manifest >> next_id >> count) || count > 64) {
+    if (!(input >> next_id >> count) || count > 64) {
         throw std::runtime_error("Invalid MANIFEST header");
     }
     std::vector<std::uint64_t> ids;
     for (std::uint64_t i = 0; i < count; ++i) {
         std::uint64_t level, id;
-        if (!(manifest >> level >> id) || level >= 64 || id >= next_id ||
-            !levels.emplace(level, id).second ||
+        if (!(input >> level >> id) || level >= 64 ||
+            id >= next_id || !levels.emplace(level, id).second ||
             std::find(ids.begin(), ids.end(), id) != ids.end()) {
             throw std::runtime_error("Invalid level in MANIFEST");
         }
-        if (!std::filesystem::is_regular_file(filePath(id))) {
+        if (!_fileFactory.isRegularFile(filePath(id).string())) {
             throw std::runtime_error("Missing SSTable referenced by MANIFEST");
         }
         ids.push_back(id);
     }
-    manifest >> std::ws;
-    if (!manifest.eof()) {
+    input >> std::ws;
+    if (!input.eof()) {
         throw std::runtime_error("Unexpected data in MANIFEST");
     }
     for (const auto& [level, id] : levels) {
@@ -146,28 +145,29 @@ std::filesystem::path SSTable::filePath(std::uint64_t id) {
     return std::to_string(id) + ".sst";
 }
 
-std::shared_ptr<std::ifstream> SSTable::openFile(std::uint64_t id) {
-    auto file = std::make_shared<std::ifstream>();
-    file->exceptions(std::ios::failbit | std::ios::badbit);
-    file->open(filePath(id), std::ios::binary);
-    return file;
+std::shared_ptr<File> SSTable::openFile(std::uint64_t id) {
+    return std::shared_ptr<File>(_fileFactory.create(filePath(id).string(), "rb"));
 }
 
 void SSTable::writeManifest(std::uint64_t nextId, const Levels& newLevels) {
-    std::ofstream manifest;
-    manifest.exceptions(std::ios::failbit | std::ios::badbit);
-    manifest.open("MANIFEST.tmp", std::ios::trunc);
-    manifest << nextId << '\n' << newLevels.size() << '\n';
+    auto manifest = _fileFactory.create("MANIFEST.tmp", "w");
+    std::string content = std::to_string(nextId) + "\n" + std::to_string(newLevels.size()) + "\n";
     for (const auto& [level, id] : newLevels) {
-        manifest << level << ' ' << id << '\n';
+        content += std::to_string(level) + " " + std::to_string(id) + "\n";
     }
-    manifest.close();
-    std::filesystem::rename("MANIFEST.tmp", "MANIFEST");
+    manifest->write(content.data(), content.size());
+    if (manifest->fsync() != 0) {
+        throw std::ios_base::failure("Failed to sync MANIFEST");
+    }
+    if (manifest->close() != 0) {
+        throw std::ios_base::failure("Failed to close MANIFEST");
+    }
+    _fileFactory.rename("MANIFEST.tmp", "MANIFEST");
 }
 
 void SSTable::flush(const Entries& entries) {
     auto newLevels = levels;
-    // Share unchanged streams until MANIFEST commits; rollback keeps the old pool.
+    // Share unchanged files until MANIFEST commits; rollback keeps the old pool.
     auto newFiles = files;
     auto newNextId = next_id;
     std::vector<std::uint64_t> created;
@@ -200,31 +200,35 @@ void SSTable::flush(const Entries& entries) {
         }
         newLevels.emplace(level, current);
         newFiles.emplace(level, std::move(currentFile));
+        // Include intermediate merge files, which are no longer in the pool.
+        for (const auto id : created) {
+            auto file = _fileFactory.create(filePath(id).string(), "rb+");
+            if (file->fsync() != 0) {
+                throw std::ios_base::failure("Failed to sync SSTable file");
+            }
+        }
         writeManifest(newNextId, newLevels);
     } catch (...) {
         newFiles.clear();
         for (const auto id : created) {
-            std::error_code error;
-            std::filesystem::remove(filePath(id), error);
+            _fileFactory.remove(filePath(id).string());
         }
         throw;
     }
     levels.swap(newLevels);
     files.swap(newFiles);
     next_id = newNextId;
-    // Close obsolete streams before deleting their files.
+    // Close obsolete handles before deleting their files.
     newFiles.clear();
     for (const auto id : obsolete) {
         // Once committed, cleanup errors must not make DB retain a flushed WAL.
-        std::error_code error;
-        std::filesystem::remove(filePath(id), error);
+        _fileFactory.remove(filePath(id).string());
     }
 }
 
 void SSTable::save(const std::filesystem::path& path, const Entries& entries) const {
-    std::ofstream file;
-    file.exceptions(std::ios::failbit | std::ios::badbit);
-    file.open(path, std::ios::binary | std::ios::trunc);
+    auto outputFile = _fileFactory.create(path.string(), "wb");
+    auto& file = *outputFile;
     const auto count = static_cast<std::uint64_t>(entries.size());
     write(file, count);
     std::uint64_t offset = sizeof(count) + count * sizeof(std::uint64_t);
@@ -238,34 +242,59 @@ void SSTable::save(const std::filesystem::path& path, const Entries& entries) co
     for (const auto& [key, value] : entries) {
         writeRecord(file, {key, value.first, value.second});
     }
-    file.close();
+    if (file.close() != 0) {
+        throw std::ios_base::failure("Failed to close SSTable file");
+    }
 }
 
-void SSTable::merge(std::ifstream& older, std::ifstream& newer, std::uint64_t output) {
+void SSTable::merge(File& older, File& newer, std::uint64_t output) {
     // Count records first to reserve space for the index before the data.
     std::uint64_t count = 0;
     mergeRecords(older, newer, [&](const Record&) { ++count; });
-    std::ofstream file;
-    file.exceptions(std::ios::failbit | std::ios::badbit);
-    file.open(filePath(output), std::ios::binary | std::ios::trunc);
+    auto outputFile = _fileFactory.create(filePath(output).string(), "wb");
+    auto& file = *outputFile;
     write(file, count);
     const auto offset = sizeof(count) + count * sizeof(std::uint64_t);
     std::vector<std::uint64_t> offsets;
     offsets.reserve(count);
-    file.seekp(static_cast<std::streamoff>(offset));
+    file.seek(static_cast<off_t>(offset));
     mergeRecords(older, newer, [&](const Record& record) {
-        offsets.push_back(static_cast<std::uint64_t>(file.tellp()));
+        offsets.push_back(static_cast<std::uint64_t>(file.tell()));
         writeRecord(file, record);
     });
-    file.seekp(static_cast<std::streamoff>(sizeof(count)));
+    file.seek(static_cast<off_t>(sizeof(count)));
     for (const auto recordOffset : offsets) {
         write(file, recordOffset);
     }
-    file.close();
+    if (file.close() != 0) {
+        throw std::ios_base::failure("Failed to close SSTable file");
+    }
 }
 
 std::optional<std::string> SSTable::get(const std::string& key) const {
     return getThroughId(key, std::numeric_limits<std::uint64_t>::max());
+}
+
+std::map<std::string, std::string> SSTable::dump() const {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ids;
+    for (const auto& [level, id] : levels) {
+        ids.emplace_back(id, level);
+    }
+    std::sort(ids.begin(), ids.end());
+    std::map<std::string, std::string> result;
+    for (const auto& [id, level] : ids) {
+        Reader reader(*files.at(level));
+        while (reader.current) {
+            const auto& record = *reader.current;
+            if (record.added) {
+                result.insert_or_assign(record.key, record.value);
+            } else {
+                result.erase(record.key);
+            }
+            reader.advance();
+        }
+    }
+    return result;
 }
 
 std::optional<std::string> SSTable::getFromFile(const std::string& key, int i) const {
@@ -282,15 +311,14 @@ std::optional<std::string> SSTable::getThroughId(const std::string& key, std::ui
     std::sort(ids.rbegin(), ids.rend());
     for (const auto& [fileId, level] : ids) {
         auto& file = *files.at(level);
-        file.clear();
-        file.seekg(0);
+        file.seek(0);
         const auto count = read<std::uint64_t>(file);
         std::uint64_t left = 0, right = count;
         while (left < right) {
             const auto middle = left + (right - left) / 2;
-            file.seekg(static_cast<std::streamoff>(sizeof(count) + middle * sizeof(std::uint64_t)));
+            file.seek(static_cast<off_t>(sizeof(count) + middle * sizeof(std::uint64_t)));
             const auto offset = read<std::uint64_t>(file);
-            file.seekg(static_cast<std::streamoff>(offset));
+            file.seek(static_cast<off_t>(offset));
             const auto flag = read<std::uint8_t>(file);
             if (flag > 1) {
                 throw std::runtime_error("Invalid SSTable presence flag");

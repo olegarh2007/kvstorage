@@ -6,12 +6,23 @@
 
 #include <utility>
 
-DB::DB(const std::string& path) : _wal(path + ".wal", _memtable) {
+DB::DB(const std::string& path, FileFactory factory)
+    : _fileFactory(std::move(factory)),
+      _sstable(_fileFactory),
+      _wal(path + ".wal", _memtable, _fileFactory) {
     flushIfNeeded();
 }
 
+// если пут вернулся успешно то и вал.аппенд вернулся успешно
+// а значит на диске останется корректная копия =>
+// по контракту wal подберется рекавери => окажется в мем тейбл после успешного
+// wal.append,после краша
+// значение окажется в мемтейбл по insert_or_assign или по контракту
+// восстановления wal.append из wal =>
+// flushIfNeeded сбрасывает memtable в sstable файл
+// по контракту сстейбл операция которая успешно сброщена в сстейбл восстановима
 void DB::put(std::string key, std::string value) {
-    _wal.put(key, value);
+    _wal.append(key, value);
     _memtable.insert_or_assign(std::move(key), std::make_pair(std::move(value), true));
     flushIfNeeded();
 }
@@ -33,8 +44,22 @@ void DB::remove(const std::string& key) {
     flushIfNeeded();
 }
 
+std::map<std::string, std::string> DB::dump() const {
+    auto result = _sstable.dump();
+    for (const auto& [key, entry] : _memtable) {
+        if (entry.second) {
+            result.insert_or_assign(key, entry.first);
+        } else {
+            result.erase(key);
+        }
+    }
+    return result;
+}
+
+// сбрасывает накопленный wal в sstable фвйл
+// либо сбрасывает либо не теряет
 void DB::flushIfNeeded() {
-    if (_memtable.size() < MAX_MEMTABLE_SIZE) {
+    if (_wal.size() < MAX_WAL_SIZE) {
         return;
     }
 
