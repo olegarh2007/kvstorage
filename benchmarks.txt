@@ -1,0 +1,8 @@
+------------------------------------------------------------------------
+Benchmark                              Time             CPU   Iterations
+------------------------------------------------------------------------
+BM_Put/iterations:1000              1761 ns         1528 ns         1000
+BM_Compaction/iterations:1000      96362 ns        90413 ns         1000
+BM_GetMemtable                       513 ns          510 ns      1000000
+BM_GetSSTable                      32361 ns        32237 ns        21144
+BM_GetMiss                         39190 ns        37311 ns        20961

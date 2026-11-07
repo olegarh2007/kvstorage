@@ -21,7 +21,55 @@ static void BM_Put(benchmark::State& state) {
     }
 }
 
-static void BM_Get(benchmark::State& state) {
+static void BM_Compaction(benchmark::State& state) {
+    DB db(prepareBenchmarkPath(), std::make_shared<RegularFS>(), 1);
+
+    std::size_t i = 0;
+    for (auto _ : state) {
+        db.put(std::to_string(i++), "value");
+    }
+}
+
+static void BM_GetMemtable(benchmark::State& state) {
+    DB db(prepareBenchmarkPath(), std::make_shared<RegularFS>(), 1'000'01);
+
+    std::vector<std::string> keys;
+    for (int i = 0; i < 1'000'00; ++i) {
+        keys.push_back(std::to_string(i));
+        db.put(keys.back(), "value");
+    }
+
+    std::mt19937 mt(42);
+    std::shuffle(keys.begin(), keys.end(), mt);
+
+    size_t i = 0;
+    for (auto _ : state) {
+        auto value = db.get(keys[i++ % keys.size()]);
+        benchmark::DoNotOptimize(value);
+    }
+}
+
+static void BM_GetSSTable(benchmark::State& state) {
+    DB db(prepareBenchmarkPath(), std::make_shared<RegularFS>(), 10'000);
+
+    std::vector<std::string> keys;
+    for (int i = 0; i < 1'000'00; ++i) {
+        keys.push_back(std::to_string(i));
+        db.put(keys.back(), "value");
+    }
+
+    std::mt19937 mt(42);
+    std::shuffle(keys.begin(), keys.end(), mt);
+
+    size_t i = 0;
+    for (auto _ : state) {
+        auto value = db.get(keys[i++ % keys.size()]);
+        benchmark::DoNotOptimize(value);
+    }
+}
+
+
+static void BM_GetMiss(benchmark::State& state) {
     DB db(prepareBenchmarkPath(), std::make_shared<RegularFS>(), 10'000);
 
     std::vector<std::string> keys;
@@ -41,12 +89,16 @@ static void BM_Get(benchmark::State& state) {
 }
 
 BENCHMARK(BM_Put)
-    ->Iterations(1000)
-    ->UseRealTime();
+    ->Iterations(1000);
 
-BENCHMARK(BM_Get)
-    ->UseRealTime();
 
-BENCHMARK(BM_Get);
+BENCHMARK(BM_Compaction)
+    ->Iterations(1000);
+
+BENCHMARK(BM_GetMemtable);
+
+BENCHMARK(BM_GetSSTable);
+
+BENCHMARK(BM_GetMiss);
 
 BENCHMARK_MAIN();
