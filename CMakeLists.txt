@@ -55,7 +55,7 @@ set(BENCHMARK_ENABLE_TESTING OFF)
 FetchContent_MakeAvailable(benchmark)
 
 add_executable(kvstorage_benchmarks
-        benchmarks/integrated_benchmark.cpp
+        benchmarks/db_benchmark.cpp
 )
 
 target_link_libraries(

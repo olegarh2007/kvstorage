@@ -18,7 +18,8 @@ public:
     // A value represents an existing entry; nullopt represents a deletion.
     using EntryMap = std::map<std::string, std::optional<std::string>>;
 
-    explicit SSTable(std::shared_ptr<const FileSystem> factory);
+    // Optional file prefix, including its parent directory (which must exist).
+    explicit SSTable(std::shared_ptr<const FileSystem> factory, std::string path = "");
     // созраняет EntryMap на диске и запускает compaction так,
     // что если flush успешно завершился,
     // то после сбоя запись останется.
@@ -42,6 +43,7 @@ public:
     std::map<std::string, std::string> dump() const;
 private:
     std::shared_ptr<const FileSystem> _fileFactory;
+    std::string _path;
     using Levels = std::map<std::uint64_t, std::uint64_t>;
     // Maps a level (not a file id) to its open file; copies share file ownership.
     using FilePool = std::map<std::uint64_t, std::shared_ptr<File>>;
@@ -57,7 +59,8 @@ private:
 
     // MANIFEST: next_id, occupied level count, then pairs of level and file id.
     void writeManifest(std::uint64_t nextId, const Levels& levels);
-    static std::filesystem::path filePath(std::uint64_t id);
+    std::filesystem::path namedPath(const std::string& name) const;
+    std::filesystem::path sstFilePath(std::uint64_t id) const;
     std::shared_ptr<File> openFile(std::uint64_t id);
     void merge(File& older, File& newer, std::uint64_t output);
     std::optional<std::string> getThroughId(const std::string& key, std::uint64_t id) const;

@@ -105,12 +105,13 @@ void mergeRecords(File& left, File& right, Emit emit) {
 
 }  // namespace
 
-SSTable::SSTable(std::shared_ptr<const FileSystem> factory) : _fileFactory(std::move(factory)) {
-    if (!_fileFactory->exists("MANIFEST")) {
+SSTable::SSTable(std::shared_ptr<const FileSystem> factory, std::string path)
+    : _fileFactory(std::move(factory)), _path(std::move(path)) {
+    if (!_fileFactory->exists(namedPath("MANIFEST").string())) {
         writeManifest(next_id, levels);
         return;
     }
-    auto manifest = _fileFactory->open("MANIFEST", "r");
+    auto manifest = _fileFactory->open(namedPath("MANIFEST").string(), "r");
     std::string content(static_cast<std::size_t>(manifest->size()), '\0');
     manifest->read(content.data(), content.size());
     std::istringstream input(content);
@@ -126,7 +127,7 @@ SSTable::SSTable(std::shared_ptr<const FileSystem> factory) : _fileFactory(std::
             std::find(ids.begin(), ids.end(), id) != ids.end()) {
             throw std::runtime_error("Invalid level in MANIFEST");
         }
-        if (!_fileFactory->isRegularFile(filePath(id).string())) {
+        if (!_fileFactory->isRegularFile(sstFilePath(id).string())) {
             throw std::runtime_error("Missing SSTable referenced by MANIFEST");
         }
         ids.push_back(id);
@@ -140,16 +141,20 @@ SSTable::SSTable(std::shared_ptr<const FileSystem> factory) : _fileFactory(std::
     }
 }
 
-std::filesystem::path SSTable::filePath(std::uint64_t id) {
-    return std::to_string(id) + ".sst";
+std::filesystem::path SSTable::namedPath(const std::string& name) const {
+    return _path.empty() ? name : _path + "." + name;
+}
+
+std::filesystem::path SSTable::sstFilePath(std::uint64_t id) const {
+    return namedPath(std::to_string(id) + ".sst");
 }
 
 std::shared_ptr<File> SSTable::openFile(std::uint64_t id) {
-    return std::shared_ptr<File>(_fileFactory->open(filePath(id).string(), "rb"));
+    return std::shared_ptr<File>(_fileFactory->open(sstFilePath(id).string(), "rb"));
 }
 
 void SSTable::writeManifest(std::uint64_t nextId, const Levels& newLevels) {
-    auto manifest = _fileFactory->open("MANIFEST.tmp", "w");
+    auto manifest = _fileFactory->open(namedPath("MANIFEST.tmp").string(), "w");
     std::string content = std::to_string(nextId) + "\n" + std::to_string(newLevels.size()) + "\n";
     for (const auto& [level, id] : newLevels) {
         content += std::to_string(level) + " " + std::to_string(id) + "\n";
@@ -161,7 +166,7 @@ void SSTable::writeManifest(std::uint64_t nextId, const Levels& newLevels) {
     if (manifest->close() != 0) {
         throw std::ios_base::failure("Failed to close MANIFEST");
     }
-    _fileFactory->rename("MANIFEST.tmp", "MANIFEST");
+    _fileFactory->rename(namedPath("MANIFEST.tmp").string(), namedPath("MANIFEST").string());
 }
 
 void SSTable::flush(const EntryMap& entries) {
@@ -179,7 +184,7 @@ void SSTable::flush(const EntryMap& entries) {
     };
     try {
         auto current = allocate();
-        save(filePath(current), entries);
+        save(sstFilePath(current), entries);
         created.push_back(current);
         auto currentFile = openFile(current);
         std::uint64_t level = 0;
@@ -201,7 +206,7 @@ void SSTable::flush(const EntryMap& entries) {
         newFiles.emplace(level, std::move(currentFile));
         // Include intermediate merge files, which are no longer in the pool.
         for (const auto id : created) {
-            auto file = _fileFactory->open(filePath(id).string(), "rb+");
+            auto file = _fileFactory->open(sstFilePath(id).string(), "rb+");
             if (file->fsync() != 0) {
                 throw std::ios_base::failure("Failed to sync SSTable file");
             }
@@ -210,7 +215,7 @@ void SSTable::flush(const EntryMap& entries) {
     } catch (...) {
         newFiles.clear();
         for (const auto id : created) {
-            _fileFactory->remove(filePath(id).string());
+            _fileFactory->remove(sstFilePath(id).string());
         }
         throw;
     }
@@ -221,7 +226,7 @@ void SSTable::flush(const EntryMap& entries) {
     newFiles.clear();
     for (const auto id : obsolete) {
         // Once committed, cleanup errors must not make DB retain a flushed WAL.
-        _fileFactory->remove(filePath(id).string());
+        _fileFactory->remove(sstFilePath(id).string());
     }
 }
 
@@ -250,7 +255,7 @@ void SSTable::merge(File& older, File& newer, std::uint64_t output) {
     // Count records first to reserve space for the index before the data.
     std::uint64_t count = 0;
     mergeRecords(older, newer, [&](const Record&) { ++count; });
-    auto outputFile = _fileFactory->open(filePath(output).string(), "wb");
+    auto outputFile = _fileFactory->open(sstFilePath(output).string(), "wb");
     auto& file = *outputFile;
     write(file, count);
     const auto offset = sizeof(count) + count * sizeof(std::uint64_t);

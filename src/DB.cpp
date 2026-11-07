@@ -6,9 +6,11 @@
 
 #include <utility>
 
-DB::DB(const std::string& path, std::shared_ptr<const FileSystem> factory)
+DB::DB(const std::string& path, std::shared_ptr<const FileSystem> factory,
+       std::size_t memtable_max_size)
     : _fileFactory(std::move(factory)),
-      _sstable(_fileFactory),
+      _memtableMaxSize(memtable_max_size),
+      _sstable(_fileFactory, path),
       _wal(path + ".wal", _memtable, _fileFactory) {
     flushIfNeeded();
 }
@@ -50,7 +52,7 @@ std::map<std::string, std::string> DB::dump() const {
 // сбрасывает накопленный wal в sstable фвйл
 // либо сбрасывает либо не теряет
 void DB::flushIfNeeded() {
-    if (_wal.size() < MAX_WAL_SIZE) {
+    if (_wal.size() < _memtableMaxSize) {
         return;
     }
 

@@ -14,9 +14,12 @@
 
 class DB {
 public:
-    static constexpr std::size_t MAX_WAL_SIZE = 3;
-
-    explicit DB(const std::string& path, std::shared_ptr<const FileSystem> factory = std::make_shared<RegularFS>());
+    // File prefix: path.wal, path.MANIFEST, path.<id>.sst.
+    // The parent directory must already exist.
+    // Flush after memtable_max_size WAL records, including repeated keys.
+    explicit DB(const std::string& path,
+                std::shared_ptr<const FileSystem> factory = std::make_shared<RegularFS>(),
+                std::size_t memtable_max_size = 1'00'00);
 
     // гарантирует запись пары key value,если завершился успешно
     // если завершился с ошибкой, то после восстановления
@@ -32,6 +35,7 @@ public:
     std::map<std::string, std::string> dump() const;
 private:
     std::shared_ptr<const FileSystem> _fileFactory;
+    std::size_t _memtableMaxSize;
     SSTable::EntryMap _memtable;
     SSTable _sstable;
     Wal _wal;
