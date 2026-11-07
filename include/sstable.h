@@ -11,22 +11,37 @@
 #include <string>
 #include <utility>
 
+// управляет файлами с данными .sst, отвечает за запись map в новый файл,
+// слияние фалов
 class SSTable {
 public:
-    // The pair holds the value and a flag: true = added, false = deleted.
-    using Entries = std::map<std::string, std::pair<std::string, bool>>;
+    // A value represents an existing entry; nullopt represents a deletion.
+    using EntryMap = std::map<std::string, std::optional<std::string>>;
 
-    explicit SSTable(FileFactory factory = {});
-    void flush(const Entries& entries);
+    explicit SSTable(std::shared_ptr<const FileSystem> factory);
+    // созраняет EntryMap на диске и запускает compaction так,
+    // что если flush успешно завершился,
+    // то после сбоя запись останется.
+    // будет записан новый MANIFEST и
+    // на каждом уровне будет не более одного файла указанного в MANIFEST.
+    //
+    // если сбой происходит во время flush то
+    // изменения либо применяются полностью либо не применяются совсем
+    // могут остаться ненужные файлы
+    void flush(const EntryMap& entries);
 
+    // возвращает значение последнюю запись которая связана с key
+    // среди всех sstable-файлов
+    //
+    // если последняя запись tomstone или вовсе нет ни одной записи
+    // среди всех файлов то возвращается std::nullopt
+    //
+    // гарантируется что файлы не повредятся
     std::optional<std::string> get(const std::string& key) const;
+    // отдает все ключ-значение содержащиеся в базе, хранящиеся в SSTable
     std::map<std::string, std::string> dump() const;
-
-    // Search active files with id <= i, newest first.
-    std::optional<std::string> getFromFile(const std::string& key, int i) const;
-
 private:
-    FileFactory _fileFactory;
+    std::shared_ptr<const FileSystem> _fileFactory;
     using Levels = std::map<std::uint64_t, std::uint64_t>;
     // Maps a level (not a file id) to its open file; copies share file ownership.
     using FilePool = std::map<std::uint64_t, std::shared_ptr<File>>;
@@ -38,7 +53,7 @@ private:
     // Native byte order: uint64_t count, uint64_t offsets[count], sorted records.
     // Record: uint8_t added, uint64_t keySize, key bytes, and, if added,
     // uint64_t valueSize followed by value bytes. Offsets are absolute.
-    void save(const std::filesystem::path& path, const Entries& entries) const;
+    void save(const std::filesystem::path& path, const EntryMap& entries) const;
 
     // MANIFEST: next_id, occupied level count, then pairs of level and file id.
     void writeManifest(std::uint64_t nextId, const Levels& levels);

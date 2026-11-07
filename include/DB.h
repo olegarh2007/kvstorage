@@ -16,7 +16,7 @@ class DB {
 public:
     static constexpr std::size_t MAX_WAL_SIZE = 100;
 
-    explicit DB(const std::string& path, FileFactory factory = {});
+    explicit DB(const std::string& path, std::shared_ptr<const FileSystem> factory = std::make_shared<RegularFS>());
 
     // гарантирует запись пары key value,если завершился успешно
     // если завершился с ошибкой, то после восстановления
@@ -32,8 +32,8 @@ public:
     std::map<std::string, std::string> dump() const;
 
 private:
-    FileFactory _fileFactory;
-    SSTable::Entries _memtable;
+    std::shared_ptr<const FileSystem> _fileFactory;
+    SSTable::EntryMap _memtable;
     SSTable _sstable;
     Wal _wal;
 

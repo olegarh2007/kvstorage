@@ -6,7 +6,7 @@
 
 #include <utility>
 
-DB::DB(const std::string& path, FileFactory factory)
+DB::DB(const std::string& path, std::shared_ptr<const FileSystem> factory)
     : _fileFactory(std::move(factory)),
       _sstable(_fileFactory),
       _wal(path + ".wal", _memtable, _fileFactory) {
@@ -23,32 +23,29 @@ DB::DB(const std::string& path, FileFactory factory)
 // по контракту сстейбл операция которая успешно сброщена в сстейбл восстановима
 void DB::put(std::string key, std::string value) {
     _wal.append(key, value);
-    _memtable.insert_or_assign(std::move(key), std::make_pair(std::move(value), true));
+    _memtable.insert_or_assign(std::move(key), std::move(value));
     flushIfNeeded();
 }
 
 std::optional<std::string> DB::get(const std::string& key) {
     const auto entry = _memtable.find(key);
     if (entry != _memtable.end()) {
-        if (entry->second.second) {
-            return entry->second.first;
-        }
-        return std::nullopt;
+        return entry->second;
     }
     return _sstable.get(key);
 }
 
 void DB::remove(const std::string& key) {
-    _wal.remove(key);
-    _memtable.insert_or_assign(key, std::make_pair(std::string{}, false));
+    _wal.append(key, std::nullopt);
+    _memtable.insert_or_assign(key, std::nullopt);
     flushIfNeeded();
 }
 
 std::map<std::string, std::string> DB::dump() const {
     auto result = _sstable.dump();
     for (const auto& [key, entry] : _memtable) {
-        if (entry.second) {
-            result.insert_or_assign(key, entry.first);
+        if (entry) {
+            result.insert_or_assign(key, *entry);
         } else {
             result.erase(key);
         }

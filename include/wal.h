@@ -8,9 +8,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
-#include <utility>
 
 #include "file.h"
 
@@ -43,24 +43,22 @@ public:
     // Replay complete records in order, retaining deletion markers for SSTables.
     // Truncate an incomplete final record before accepting new writes.
     Wal(std::string path,
-        std::map<std::string, std::pair<std::string, bool>>& map,
-        FileFactory factory = {});
+        std::map<std::string, std::optional<std::string>>& map,
+        std::shared_ptr<const FileSystem> factory = std::make_shared<RegularFS>());
 
     // при успешном выполнении запись сохраняется в wal
     // и гарантированно переживает сбой
     // пока не удалена последущей операцией
-    void append(std::string_view key, std::string_view value);
-    void remove(std::string_view key);
+    // std::nullopt записывает удаление ключа; пустая строка сохраняется как значение.
+    void append(std::string_view key, std::optional<std::string_view> value);
     void clear();
 
-    // Number of records in the WAL, including restored records.
+    // выдает количество полностью записанных записей
     std::size_t size() const noexcept;
 
 private:
-    void write(Operation operation, std::string_view key, std::string_view value);
-
     std::string _path;
-    FileFactory _fileFactory;
+    std::shared_ptr<const FileSystem> _fileFactory;
     std::unique_ptr<File> _out;
     std::size_t _size = 0;
 };

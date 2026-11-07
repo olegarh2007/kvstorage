@@ -49,11 +49,11 @@ bool readString(File& in, std::uint64_t& remaining, std::string& str) {
 }  // namespace
 
 Wal::Wal(std::string path,
-         std::map<std::string, std::pair<std::string, bool>>& map,
-         FileFactory factory)
+         std::map<std::string, std::optional<std::string>>& map,
+         std::shared_ptr<const FileSystem> factory)
     : _path(std::move(path)), _fileFactory(std::move(factory)) {
-    if (_fileFactory.exists(_path)) {
-        auto in = _fileFactory.create(_path, "rb+");
+    if (_fileFactory->exists(_path)) {
+        auto in = _fileFactory->open(_path, "rb+");
         const auto fileSize = in->size();
         in->seek(0);
         auto remaining = static_cast<std::uint64_t>(fileSize);
@@ -75,9 +75,9 @@ Wal::Wal(std::string path,
                 if (!readString(*in, remaining, value)) {
                     break;
                 }
-                map.insert_or_assign(std::move(key), std::make_pair(std::move(value), true));
+                map.insert_or_assign(std::move(key), std::move(value));
             } else {
-                map.insert_or_assign(std::move(key), std::make_pair(std::string{}, false));
+                map.insert_or_assign(std::move(key), std::nullopt);
             }
             ++_size;
             completeBytes = static_cast<std::uint64_t>(fileSize) - remaining;
@@ -88,43 +88,36 @@ Wal::Wal(std::string path,
         }
     }
 
-    _out = _fileFactory.create(_path, "ab");
+    _out = _fileFactory->open(_path, "ab");
 }
 
 void Wal::clear() {
     if (_out->close() != 0) {
         throw std::runtime_error("Failed to close WAL: " + _path);
     }
-    _out = _fileFactory.create(_path, "wb");
+    _out = _fileFactory->open(_path, "wb");
     if (_out->fsync() != 0) {
         throw std::runtime_error("Failed to sync cleared WAL: " + _path);
     }
     _size = 0;
 }
 
-void Wal::append(std::string_view key, std::string_view value) {
-    write(Operation::Put, key, value);
-}
-
-void Wal::remove(std::string_view key) {
-    write(Operation::Delete, key, {});
-}
-
 std::size_t Wal::size() const noexcept {
     return _size;
 }
 
-void Wal::write(Operation operation, std::string_view key, std::string_view value) {
+void Wal::append(std::string_view key, std::optional<std::string_view> value) {
     checkSize(key);
-    if (operation == Operation::Put) {
-        checkSize(value);
+    if (value) {
+        checkSize(*value);
     }
 
+    const auto operation = value ? Operation::Put : Operation::Delete;
     const auto code = static_cast<std::uint8_t>(operation);
     _out->write(&code, sizeof(code));
     writeString(*_out, key);
-    if (operation == Operation::Put) {
-        writeString(*_out, value);
+    if (value) {
+        writeString(*_out, *value);
     }
 
     if (_out->flush() != 0) {
