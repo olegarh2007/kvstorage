@@ -14,7 +14,7 @@
 
 class DB {
 public:
-    static constexpr std::size_t MAX_WAL_SIZE = 100;
+    static constexpr std::size_t MAX_WAL_SIZE = 3;
 
     explicit DB(const std::string& path, std::shared_ptr<const FileSystem> factory = std::make_shared<RegularFS>());
 
@@ -22,15 +22,14 @@ public:
     // если завершился с ошибкой, то после восстановления
     // может быть доступно как старое так и новое значение
     // частичная запись недоступна
-    void put(std::string key, std::string value);
+    // std::nullopt удаляет ключ; пустая строка сохраняется как значение.
+    void put(std::string key, std::optional<std::string> value);
     // Возвращает текущее значение, связанное с key,
     // если ключ существует в БД.
     // Если ключ отсутствует, возвращает std::nullopt.
     // Не изменяет логическое состояние БД.
     std::optional<std::string> get(const std::string& key);
-    void remove(const std::string& key);
     std::map<std::string, std::string> dump() const;
-
 private:
     std::shared_ptr<const FileSystem> _fileFactory;
     SSTable::EntryMap _memtable;

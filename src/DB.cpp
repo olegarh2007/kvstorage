@@ -21,7 +21,7 @@ DB::DB(const std::string& path, std::shared_ptr<const FileSystem> factory)
 // восстановления wal.append из wal =>
 // flushIfNeeded сбрасывает memtable в sstable файл
 // по контракту сстейбл операция которая успешно сброщена в сстейбл восстановима
-void DB::put(std::string key, std::string value) {
+void DB::put(std::string key, std::optional<std::string> value) {
     _wal.append(key, value);
     _memtable.insert_or_assign(std::move(key), std::move(value));
     flushIfNeeded();
@@ -33,12 +33,6 @@ std::optional<std::string> DB::get(const std::string& key) {
         return entry->second;
     }
     return _sstable.get(key);
-}
-
-void DB::remove(const std::string& key) {
-    _wal.append(key, std::nullopt);
-    _memtable.insert_or_assign(key, std::nullopt);
-    flushIfNeeded();
 }
 
 std::map<std::string, std::string> DB::dump() const {

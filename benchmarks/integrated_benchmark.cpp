@@ -112,7 +112,7 @@ void Run(benchmark::State& state) {
                 } else if constexpr (scenario == Scenario::PutUpdate) {
                     db.put(key, updatedValue);
                 } else if constexpr (scenario == Scenario::Delete) {
-                    db.remove(key);
+                    db.put(key, std::nullopt);
                 } else if constexpr (scenario == Scenario::GetMissing) {
                     benchmark::DoNotOptimize(db.get(missingKeys[accesses[i]]));
                 } else if constexpr (scenario == Scenario::Mixed) {
