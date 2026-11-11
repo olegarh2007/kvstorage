@@ -1,15 +1,17 @@
 #ifndef KVSTORAGE_SSTABLE_H
 #define KVSTORAGE_SSTABLE_H
 
-#include "file.h"
-
 #include <cstdint>
 #include <filesystem>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
+
+#include "BloomFilter.h"
+#include "file.h"
 
 // управляет файлами с данными .sst, отвечает за запись map в новый файл,
 // слияние фалов
@@ -29,6 +31,8 @@ public:
     // если сбой происходит во время flush то
     // изменения либо применяются полностью либо не применяются совсем
     // могут остаться ненужные файлы
+    //
+    // по завершении метода все .sst файлы должны иметь соответсвующие блум-фильтры в мапе
     void flush(const EntryMap& entries);
 
     // возвращает значение последнюю запись которая связана с key
@@ -51,6 +55,8 @@ private:
     Levels levels;
     // Exactly one open file per occupied MANIFEST level.
     FilePool files;
+    // converts fileId to its BloomFilter
+    std::unordered_map<uint64_t, BloomFilter> bloom_filters_;
 
     // Native byte order: uint64_t count, uint64_t offsets[count], sorted records.
     // Record: uint8_t added, uint64_t keySize, key bytes, and, if added,

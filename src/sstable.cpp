@@ -137,7 +137,17 @@ SSTable::SSTable(std::shared_ptr<const FileSystem> factory, std::string path)
         throw std::runtime_error("Unexpected data in MANIFEST");
     }
     for (const auto& [level, id] : levels) {
-        files.emplace(level, openFile(id));
+        auto file = openFile(id);
+        file->seek(0);
+        const auto count = read<std::uint64_t>(*file);
+        BloomFilter filter(std::max<std::uint64_t>(1, count), 0.01);
+        Reader reader(*file);
+        while (reader.current) {
+            filter.add(reader.current->key);
+            reader.advance();
+        }
+        bloom_filters_.emplace(id, std::move(filter));
+        files.emplace(level, std::move(file));
     }
 }
 
@@ -169,6 +179,12 @@ void SSTable::writeManifest(std::uint64_t nextId, const Levels& newLevels) {
     _fileFactory->rename(namedPath("MANIFEST.tmp").string(), namedPath("MANIFEST").string());
 }
 
+static void fill_bloom_filter(BloomFilter &filter, const SSTable::EntryMap& entries) {
+    for (const auto& [key, value] : entries) {
+        filter.add(key);
+    }
+}
+
 void SSTable::flush(const EntryMap& entries) {
     auto newLevels = levels;
     // Share unchanged files until MANIFEST commits; rollback keeps the old pool.
@@ -186,6 +202,10 @@ void SSTable::flush(const EntryMap& entries) {
         auto current = allocate();
         save(sstFilePath(current), entries);
         created.push_back(current);
+
+        auto [it, _] = bloom_filters_.try_emplace(current, std::max<std::size_t>(1, entries.size()), 0.01);
+        fill_bloom_filter(it->second, entries);
+
         auto currentFile = openFile(current);
         std::uint64_t level = 0;
         while (newLevels.contains(level)) {
@@ -215,6 +235,7 @@ void SSTable::flush(const EntryMap& entries) {
     } catch (...) {
         newFiles.clear();
         for (const auto id : created) {
+            bloom_filters_.erase(id);
             _fileFactory->remove(sstFilePath(id).string());
         }
         throw;
@@ -225,6 +246,7 @@ void SSTable::flush(const EntryMap& entries) {
     // Close obsolete handles before deleting their files.
     newFiles.clear();
     for (const auto id : obsolete) {
+        bloom_filters_.erase(id);
         // Once committed, cleanup errors must not make DB retain a flushed WAL.
         _fileFactory->remove(sstFilePath(id).string());
     }
@@ -260,9 +282,11 @@ void SSTable::merge(File& older, File& newer, std::uint64_t output) {
     write(file, count);
     const auto offset = sizeof(count) + count * sizeof(std::uint64_t);
     std::vector<std::uint64_t> offsets;
+    BloomFilter filter(std::max<std::uint64_t>(1, count), 0.01);
     offsets.reserve(count);
     file.seek(static_cast<off_t>(offset));
     mergeRecords(older, newer, [&](const Record& record) {
+        filter.add(record.key);
         offsets.push_back(static_cast<std::uint64_t>(file.tell()));
         writeRecord(file, record);
     });
@@ -273,6 +297,7 @@ void SSTable::merge(File& older, File& newer, std::uint64_t output) {
     if (file.close() != 0) {
         throw std::ios_base::failure("Failed to close SSTable file");
     }
+    bloom_filters_.emplace(output, std::move(filter));
 }
 
 std::optional<std::string> SSTable::get(const std::string& key) const {
@@ -301,6 +326,9 @@ std::map<std::string, std::string> SSTable::dump() const {
     return result;
 }
 
+static size_t bloom_checks = 0;
+static size_t binary_searches = 0;
+
 std::optional<std::string> SSTable::getThroughId(const std::string& key, std::uint64_t id) const {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ids;
     for (const auto& [level, fileId] : levels) {
@@ -310,8 +338,17 @@ std::optional<std::string> SSTable::getThroughId(const std::string& key, std::ui
     }
     std::sort(ids.rbegin(), ids.rend());
     for (const auto& [fileId, level] : ids) {
+        // для каждого активного SSTable существует соответсвующий BloomFilter
+        const BloomFilter &bloom_filter = bloom_filters_.at(fileId);
+        bloom_checks++;
+        if (!bloom_filter.possiblyContains(key)) {
+            continue;
+        }
+        binary_searches++;
+
         auto& file = *files.at(level);
         file.seek(0);
+
         const auto count = read<std::uint64_t>(file);
         std::uint64_t left = 0, right = count;
         while (left < right) {

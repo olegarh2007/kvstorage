@@ -7,10 +7,15 @@ add_library(kvstorage STATIC
         src/DB.cpp
         src/wal.cpp
         src/sstable.cpp
+        src/BloomFilter.cpp
 )
 
 target_include_directories(kvstorage
         PUBLIC include
+)
+
+target_compile_options(kvstorage PRIVATE
+        -fno-omit-frame-pointer
 )
 
 include(FetchContent)
@@ -54,8 +59,17 @@ set(BENCHMARK_ENABLE_TESTING OFF)
 
 FetchContent_MakeAvailable(benchmark)
 
+target_compile_options(benchmark PRIVATE
+        -fno-omit-frame-pointer
+        -fno-optimize-sibling-calls
+)
+
 add_executable(kvstorage_benchmarks
         benchmarks/db_benchmark.cpp
+)
+
+target_compile_options(kvstorage_benchmarks PRIVATE
+        -O2 -g -fno-omit-frame-pointer
 )
 
 target_link_libraries(

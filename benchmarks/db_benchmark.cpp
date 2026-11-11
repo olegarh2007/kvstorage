@@ -68,7 +68,6 @@ static void BM_GetSSTable(benchmark::State& state) {
     }
 }
 
-
 static void BM_GetMiss(benchmark::State& state) {
     DB db(prepareBenchmarkPath(), std::make_shared<RegularFS>(), 10'000);
 
@@ -76,6 +75,7 @@ static void BM_GetMiss(benchmark::State& state) {
     for (int i = 0; i < 1'000'00; ++i) {
         keys.push_back(std::to_string(i));
         db.put(keys.back(), "value");
+        keys.back().push_back('a');
     }
 
     std::mt19937 mt(42);
@@ -90,7 +90,6 @@ static void BM_GetMiss(benchmark::State& state) {
 
 BENCHMARK(BM_Put)
     ->Iterations(1000);
-
 
 BENCHMARK(BM_Compaction)
     ->Iterations(1000);
