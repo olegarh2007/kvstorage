@@ -24,12 +24,15 @@ DB::DB(const std::string& path, std::shared_ptr<const FileSystem> factory,
 // flushIfNeeded сбрасывает memtable в sstable файл
 // по контракту сстейбл операция которая успешно сброщена в сстейбл восстановима
 void DB::put(std::string key, std::optional<std::string> value) {
+    std::lock_guard lock(put_mutex_);
+    std::lock_guard get_lock(put_get_mutex_);
     _wal.append(key, value);
     _memtable.insert_or_assign(std::move(key), std::move(value));
     flushIfNeeded();
 }
 
 std::optional<std::string> DB::get(const std::string& key) {
+    std::shared_lock put_lock(put_get_mutex_);
     const auto entry = _memtable.find(key);
     if (entry != _memtable.end()) {
         return entry->second;
@@ -49,8 +52,6 @@ std::map<std::string, std::string> DB::dump() const {
     return result;
 }
 
-// сбрасывает накопленный wal в sstable фвйл
-// либо сбрасывает либо не теряет
 void DB::flushIfNeeded() {
     if (_wal.size() < _memtableMaxSize) {
         return;

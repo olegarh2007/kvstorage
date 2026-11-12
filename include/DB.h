@@ -6,7 +6,9 @@
 #define KVSTORAGE_DB_H
 #include <cstddef>
 #include <map>
+#include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 
 #include "sstable.h"
@@ -31,15 +33,21 @@ public:
     // если ключ существует в БД.
     // Если ключ отсутствует, возвращает std::nullopt.
     // Не изменяет логическое состояние БД.
+    // Забирает мьютекс
     std::optional<std::string> get(const std::string& key);
     std::map<std::string, std::string> dump() const;
 private:
+    std::mutex put_mutex_;
+    std::shared_mutex put_get_mutex_;
     std::shared_ptr<const FileSystem> _fileFactory;
     std::size_t _memtableMaxSize;
     SSTable::EntryMap _memtable;
     SSTable _sstable;
     Wal _wal;
 
+    // сбрасывает накопленный wal в sstable фвйл
+    // либо сбрасывает либо не теряет
+    // вызывающий обязан захватить мьютекс
     void flushIfNeeded();
 };
 
