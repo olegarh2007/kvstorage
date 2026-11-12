@@ -15,6 +15,36 @@ T read(File& file) {
     return value;
 }
 
+void readAt(File& file, void* data, std::size_t size, off_t& offset) {
+    auto* bytes = static_cast<char*>(data);
+    while (size > 0) {
+        const auto count = file.pread(bytes, size, offset);
+        if (count <= 0) {
+            throw std::ios_base::failure("Failed to read SSTable file");
+        }
+        bytes += count;
+        size -= static_cast<std::size_t>(count);
+        offset += count;
+    }
+}
+
+template <typename T>
+T readAt(File& file, off_t& offset) {
+    T value;
+    readAt(file, &value, sizeof(value), offset);
+    return value;
+}
+
+std::string readStringAt(File& file, off_t& offset) {
+    const auto size = readAt<std::uint64_t>(file, offset);
+    if (size > std::string().max_size()) {
+        throw std::runtime_error("Invalid SSTable string size");
+    }
+    std::string value(static_cast<std::size_t>(size), '\0');
+    readAt(file, value.data(), value.size(), offset);
+    return value;
+}
+
 template <typename T>
 void write(File& file, T value) {
     file.write(&value, sizeof(value));
@@ -347,22 +377,21 @@ std::optional<std::string> SSTable::getThroughId(const std::string& key, std::ui
         binary_searches++;
 
         auto& file = *files.at(level);
-        file.seek(0);
-
-        const auto count = read<std::uint64_t>(file);
+        off_t position = 0;
+        const auto count = readAt<std::uint64_t>(file, position);
         std::uint64_t left = 0, right = count;
         while (left < right) {
             const auto middle = left + (right - left) / 2;
-            file.seek(static_cast<off_t>(sizeof(count) + middle * sizeof(std::uint64_t)));
-            const auto offset = read<std::uint64_t>(file);
-            file.seek(static_cast<off_t>(offset));
-            const auto flag = read<std::uint8_t>(file);
+            position = static_cast<off_t>(sizeof(count) + middle * sizeof(std::uint64_t));
+            const auto offset = readAt<std::uint64_t>(file, position);
+            position = static_cast<off_t>(offset);
+            const auto flag = readAt<std::uint8_t>(file, position);
             if (flag > 1) {
                 throw std::runtime_error("Invalid SSTable presence flag");
             }
-            const auto storedKey = readString(file);
+            const auto storedKey = readStringAt(file, position);
             if (storedKey == key) {
-                return flag == 1 ? std::optional<std::string>(readString(file)) : std::nullopt;
+                return flag == 1 ? std::optional<std::string>(readStringAt(file, position)) : std::nullopt;
             }
             if (storedKey < key) {
                 left = middle + 1;

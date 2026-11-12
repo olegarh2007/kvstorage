@@ -31,10 +31,12 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 
 add_executable(kvstorage_tests
+        tests/BloomFilterTest.cpp
         tests/memfs_test.cpp
         tests/wal_test.cpp
         tests/sstable_test.cpp
         tests/db_test.cpp
+        tests/db_concurrency_test.cpp
 )
 
 target_link_libraries(

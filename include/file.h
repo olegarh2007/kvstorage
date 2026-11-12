@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <climits>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -28,6 +29,8 @@ public:
     File& operator=(File&&) noexcept = default;
 
     virtual void read(void* data, std::size_t size) = 0;
+    // Read at offset without changing the current position; returns bytes read or -1.
+    virtual ssize_t pread(void* data, std::size_t size, off_t offset) = 0;
     virtual void write(const void* data, std::size_t size) = 0;
     virtual void seek(off_t offset) = 0;
     virtual off_t tell() const = 0;
@@ -89,6 +92,24 @@ class MemFS : public FileSystem {
                 std::memcpy(data, content.data() + _position, size);
             }
             _position += size;
+        }
+
+        ssize_t pread(void* data, std::size_t size, off_t offset) override {
+            if (!_open || !_readable) {
+                errno = EBADF;
+                return -1;
+            }
+            if (offset < 0 || size > static_cast<std::size_t>(SSIZE_MAX)) {
+                errno = EINVAL;
+                return -1;
+            }
+            const auto& content = fs.get(_path);
+            const auto start = static_cast<std::size_t>(offset);
+            const auto count = start >= content.size() ? 0 : std::min(size, content.size() - start);
+            if (count != 0) {
+                std::memcpy(data, content.data() + start, count);
+            }
+            return static_cast<ssize_t>(count);
         }
 
         void write(const void* data, std::size_t size) override {
@@ -309,6 +330,17 @@ class RegularFS : public FileSystem {
             if (!_file || (size != 0 && std::fread(data, 1, size, _file) != size)) {
                 throw std::ios_base::failure("Failed to read file");
             }
+        }
+
+        ssize_t pread(void* data, std::size_t size, off_t offset) override {
+            if (!_file) {
+                errno = EBADF;
+                return -1;
+            }
+            if (std::fflush(_file) != 0) {
+                return -1;
+            }
+            return ::pread(::fileno(_file), data, size, offset);
         }
 
         void write(const void* data, std::size_t size) override {
