@@ -25,9 +25,11 @@ DB::DB(const std::string& path, std::shared_ptr<const FileSystem> factory,
 // по контракту сстейбл операция которая успешно сброщена в сстейбл восстановима
 void DB::put(std::string key, std::optional<std::string> value) {
     std::lock_guard lock(put_mutex_);
-    std::lock_guard get_lock(put_get_mutex_);
     _wal.append(key, value);
-    _memtable.insert_or_assign(std::move(key), std::move(value));
+    {
+        std::lock_guard get_lock(put_get_mutex_);
+        _memtable.insert_or_assign(std::move(key), std::move(value));
+    }
     flushIfNeeded();
 }
 
@@ -57,7 +59,12 @@ void DB::flushIfNeeded() {
         return;
     }
 
-    _sstable.flush(_memtable);
+    auto prepared = _sstable.prepareFlush(_memtable);
+    {
+        std::lock_guard get_lock(put_get_mutex_);
+        _sstable.commitFlush(prepared);
+    }
+
     _wal.clear();
     _memtable.clear();
 }

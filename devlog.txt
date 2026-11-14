@@ -31,3 +31,15 @@ BM_GetMemtable                       469 ns          465 ns      1592282
 BM_GetSSTable                      18671 ns        18560 ns        39974
 BM_GetMiss                           569 ns          556 ns      1343152
 x73, ура
+-----------------------------------------------------------------------------------------
+Benchmark                               Time             CPU   Iterations UserCounters...
+-----------------------------------------------------------------------------------------
+BM_DBRead<1>/100000/real_time    52769260 ns     51750658 ns           10 items_per_second=1.89504M/s
+BM_DBRead<1>/1000000/real_time 1165892800 ns   1107760801 ns            1 items_per_second=857.712k/s
+BM_DBRead<8>/100000/real_time    12953466 ns        38459 ns           41 items_per_second=7.71994M/s
+BM_DBRead<8>/1000000/real_time  294005452 ns        43694 ns            2 items_per_second=3.4013M/s
+BM_Put/iterations:1000                962 ns          957 ns         1000
+BM_Compaction/iterations:1000       79630 ns        78201 ns         1000
+BM_GetMemtable                        481 ns          477 ns      1472028
+BM_GetSSTable                       21026 ns        20812 ns        36140
+BM_GetMiss                            556 ns          554 ns      1262394

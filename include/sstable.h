@@ -9,6 +9,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "BloomFilter.h"
 #include "file.h"
@@ -51,6 +52,19 @@ private:
     using Levels = std::map<std::uint64_t, std::uint64_t>;
     // Maps a level (not a file id) to its open file; copies share file ownership.
     using FilePool = std::map<std::uint64_t, std::shared_ptr<File>>;
+public:
+    struct PreparedFlush {
+        Levels levels;
+        FilePool files;
+        std::uint64_t nextId;
+        std::vector<std::uint64_t> created;
+        std::vector<std::uint64_t> obsolete;
+    };
+    PreparedFlush prepareFlush(const EntryMap& entries);
+    void commitFlush(PreparedFlush& prepared);
+    void rollbackFlush(PreparedFlush& prepared);
+
+private:
     std::uint64_t next_id = 0;
     Levels levels;
     // Exactly one open file per occupied MANIFEST level.

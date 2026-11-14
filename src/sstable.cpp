@@ -216,68 +216,82 @@ static void fill_bloom_filter(BloomFilter &filter, const SSTable::EntryMap& entr
 }
 
 void SSTable::flush(const EntryMap& entries) {
-    auto newLevels = levels;
+    auto prepared = prepareFlush(entries);
+    commitFlush(prepared);
+}
+
+SSTable::PreparedFlush SSTable::prepareFlush(const EntryMap& entries) {
     // Share unchanged files until MANIFEST commits; rollback keeps the old pool.
-    auto newFiles = files;
-    auto newNextId = next_id;
-    std::vector<std::uint64_t> created;
-    std::vector<std::uint64_t> obsolete;
+    PreparedFlush prepared{levels, files, next_id, {}, {}};
     auto allocate = [&]() {
-        if (newNextId == std::numeric_limits<std::uint64_t>::max()) {
+        if (prepared.nextId == std::numeric_limits<std::uint64_t>::max()) {
             throw std::runtime_error("SSTable file ids exhausted");
         }
-        return newNextId++;
+        return prepared.nextId++;
     };
     try {
         auto current = allocate();
         save(sstFilePath(current), entries);
-        created.push_back(current);
+        prepared.created.push_back(current);
 
         auto [it, _] = bloom_filters_.try_emplace(current, std::max<std::size_t>(1, entries.size()), 0.01);
         fill_bloom_filter(it->second, entries);
 
         auto currentFile = openFile(current);
         std::uint64_t level = 0;
-        while (newLevels.contains(level)) {
-            const auto previous = newLevels.at(level);
+        while (prepared.levels.contains(level)) {
+            const auto previous = prepared.levels.at(level);
             const auto output = allocate();
-            merge(*newFiles.at(level), *currentFile, output);
-            created.push_back(output);
+            merge(*prepared.files.at(level), *currentFile, output);
+            prepared.created.push_back(output);
             auto outputFile = openFile(output);
-            obsolete.push_back(previous);
-            obsolete.push_back(current);
-            newLevels.erase(level);
-            newFiles.erase(level);
+            prepared.obsolete.push_back(previous);
+            prepared.obsolete.push_back(current);
+            prepared.levels.erase(level);
+            prepared.files.erase(level);
             current = output;
             currentFile = std::move(outputFile);
             ++level;
         }
-        newLevels.emplace(level, current);
-        newFiles.emplace(level, std::move(currentFile));
+        prepared.levels.emplace(level, current);
+        prepared.files.emplace(level, std::move(currentFile));
         // Include intermediate merge files, which are no longer in the pool.
-        for (const auto id : created) {
+        for (const auto id : prepared.created) {
             auto file = _fileFactory->open(sstFilePath(id).string(), "rb+");
             if (file->fsync() != 0) {
                 throw std::ios_base::failure("Failed to sync SSTable file");
             }
         }
-        writeManifest(newNextId, newLevels);
     } catch (...) {
-        newFiles.clear();
-        for (const auto id : created) {
-            bloom_filters_.erase(id);
-            _fileFactory->remove(sstFilePath(id).string());
-        }
+        rollbackFlush(prepared);
         throw;
     }
-    levels.swap(newLevels);
-    files.swap(newFiles);
-    next_id = newNextId;
+    return prepared;
+}
+
+void SSTable::commitFlush(PreparedFlush& prepared) {
+    try {
+        writeManifest(prepared.nextId, prepared.levels);
+    } catch (...) {
+        rollbackFlush(prepared);
+        throw;
+    }
+    levels.swap(prepared.levels);
+    files.swap(prepared.files);
+    next_id = prepared.nextId;
     // Close obsolete handles before deleting their files.
-    newFiles.clear();
-    for (const auto id : obsolete) {
+    prepared.files.clear();
+    for (const auto id : prepared.obsolete) {
         bloom_filters_.erase(id);
         // Once committed, cleanup errors must not make DB retain a flushed WAL.
+        _fileFactory->remove(sstFilePath(id).string());
+    }
+}
+
+void SSTable::rollbackFlush(PreparedFlush& prepared) {
+    prepared.files.clear();
+    for (const auto id : prepared.created) {
+        bloom_filters_.erase(id);
         _fileFactory->remove(sstFilePath(id).string());
     }
 }
