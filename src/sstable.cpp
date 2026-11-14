@@ -356,9 +356,6 @@ std::map<std::string, std::string> SSTable::dump() const {
     return result;
 }
 
-static size_t bloom_checks = 0;
-static size_t binary_searches = 0;
-
 std::optional<std::string> SSTable::getThroughId(const std::string& key, std::uint64_t id) const {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ids;
     for (const auto& [level, fileId] : levels) {
@@ -370,11 +367,9 @@ std::optional<std::string> SSTable::getThroughId(const std::string& key, std::ui
     for (const auto& [fileId, level] : ids) {
         // для каждого активного SSTable существует соответсвующий BloomFilter
         const BloomFilter &bloom_filter = bloom_filters_.at(fileId);
-        bloom_checks++;
         if (!bloom_filter.possiblyContains(key)) {
             continue;
         }
-        binary_searches++;
 
         auto& file = *files.at(level);
         off_t position = 0;

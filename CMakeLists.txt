@@ -15,7 +15,12 @@ target_include_directories(kvstorage
 )
 
 target_compile_options(kvstorage PRIVATE
+        -fsanitize=thread
         -fno-omit-frame-pointer
+)
+
+target_link_options(kvstorage PUBLIC
+        -fsanitize=thread
 )
 
 include(FetchContent)
@@ -37,6 +42,15 @@ add_executable(kvstorage_tests
         tests/sstable_test.cpp
         tests/db_test.cpp
         tests/db_concurrency_test.cpp
+)
+
+target_compile_options(kvstorage_tests PRIVATE
+        -fsanitize=thread
+        -fno-omit-frame-pointer
+)
+
+target_link_options(kvstorage_tests PRIVATE
+        -fsanitize=thread
 )
 
 target_link_libraries(
@@ -71,7 +85,7 @@ add_executable(kvstorage_benchmarks
 )
 
 target_compile_options(kvstorage_benchmarks PRIVATE
-        -O2 -g -fno-omit-frame-pointer
+        -O2 -g -fno-omit-frame-pointer -fsanitize=thread
 )
 
 target_link_libraries(

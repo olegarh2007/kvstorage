@@ -61,3 +61,4 @@ void DB::flushIfNeeded() {
     _wal.clear();
     _memtable.clear();
 }
+
