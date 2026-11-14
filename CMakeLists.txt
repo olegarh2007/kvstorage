@@ -3,6 +3,8 @@ project(kvstorage)
 
 set(CMAKE_CXX_STANDARD 20)
 
+option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+
 add_library(kvstorage STATIC
         src/DB.cpp
         src/wal.cpp
@@ -14,14 +16,15 @@ target_include_directories(kvstorage
         PUBLIC include
 )
 
-target_compile_options(kvstorage PRIVATE
-        -fsanitize=thread
-        -fno-omit-frame-pointer
-)
-
-target_link_options(kvstorage PUBLIC
-        -fsanitize=thread
-)
+if(ENABLE_TSAN)
+    target_compile_options(kvstorage PUBLIC
+            -fsanitize=thread
+            -fno-omit-frame-pointer
+    )
+    target_link_options(kvstorage PUBLIC
+            -fsanitize=thread
+    )
+endif()
 
 include(FetchContent)
 
@@ -42,15 +45,6 @@ add_executable(kvstorage_tests
         tests/sstable_test.cpp
         tests/db_test.cpp
         tests/db_concurrency_test.cpp
-)
-
-target_compile_options(kvstorage_tests PRIVATE
-        -fsanitize=thread
-        -fno-omit-frame-pointer
-)
-
-target_link_options(kvstorage_tests PRIVATE
-        -fsanitize=thread
 )
 
 target_link_libraries(
@@ -85,7 +79,7 @@ add_executable(kvstorage_benchmarks
 )
 
 target_compile_options(kvstorage_benchmarks PRIVATE
-        -O2 -g -fno-omit-frame-pointer -fsanitize=thread
+        -O2 -g -fno-omit-frame-pointer
 )
 
 target_link_libraries(

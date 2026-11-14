@@ -125,5 +125,7 @@ void Wal::append(std::string_view key, std::optional<std::string_view> value) {
     }
     ++_size;
 
-    _out->fsync();
+    if (_out->fsync() != 0) {
+        throw std::runtime_error("Failed to fsync: " + _path);
+    }
 }
