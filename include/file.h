@@ -64,15 +64,14 @@ public:
 };
 
 class MemFS : public FileSystem {
-    // Nested operations (rename -> remove, fsync -> onSteps -> crash) share this lock.
-    mutable std::recursive_mutex _mutex;
+    mutable std::mutex _mutex;
     // Shared cache and durable data; crash after the Nth step.
     // Each written byte is one step; open, close, fsync and syncDirectory take one step each.
     class FailingFile : public File {
     public:
         FailingFile(const char* path, const char* mode, const MemFS& fs)
             : fs(fs) {
-            const std::lock_guard lock(fs._mutex);
+            // MemFS::open holds the filesystem mutex.
             if (!path || !mode || (mode[0] != 'r' && mode[0] != 'w' && mode[0] != 'a')) {
                 throw std::ios_base::failure("Invalid file path or mode");
             }
@@ -81,19 +80,19 @@ class MemFS : public FileSystem {
             _writable = mode[0] != 'r' || update;
             _append = mode[0] == 'a';
             const std::string filePath(path);
-            if (!fs.exists(filePath)) {
+            if (!fs.existsUnlocked(filePath)) {
                 if (mode[0] == 'r') {
                     throw std::ios_base::failure("In-memory file does not exist");
                 }
                 fs.directories_in_cache[parentPath(filePath)].push_back({filePath, std::to_string(fs.next_id++)});
             }
-            _fileId = fs.fileId(filePath);
+            _fileId = fs.fileIdUnlocked(filePath);
             auto& content = fs.in_cache[_fileId];
             if (mode[0] == 'w') {
                 content.clear();
             }
             _position = _append ? content.size() : 0;
-            fs.onSteps(1);
+            fs.onStepsUnlocked(1);
         }
 
         explicit operator bool() const noexcept override {
@@ -152,7 +151,7 @@ class MemFS : public FileSystem {
                 std::memcpy(content.data() + _position, data, written);
             }
             _position += written;
-            fs.onSteps(written);
+            fs.onStepsUnlocked(written);
         }
 
         void seek(off_t offset) override {
@@ -201,7 +200,7 @@ class MemFS : public FileSystem {
                 return -1;
             }
             try {
-                fs.syncData(_fileId);
+                fs.syncDataUnlocked(_fileId);
                 return 0;
             } catch (...) {
                 errno = EIO;
@@ -216,7 +215,7 @@ class MemFS : public FileSystem {
             }
             _open = false;
             try {
-                fs.onSteps(1);
+                fs.onStepsUnlocked(1);
                 return 0;
             } catch (...) {
                 errno = EIO;
@@ -278,55 +277,39 @@ public:
 
     std::string fileId(const std::string& path) const {
         const std::lock_guard lock(_mutex);
-        const auto directory = directories_in_cache.find(parentPath(path));
-        if (directory != directories_in_cache.end()) {
-            for (const auto& entry : directory->second) {
-                if (entry.path == path) return entry.id;
-            }
-        }
-        throw std::ios_base::failure("In-memory file does not exist");
+        return fileIdUnlocked(path);
     }
 
     std::string get(const std::string& filename) const {
         const std::lock_guard lock(_mutex);
-        return in_cache[fileId(filename)];
+        return in_cache[fileIdUnlocked(filename)];
     }
 
     void fsync(const std::string& filename) const {
         const std::lock_guard lock(_mutex);
-        syncData(fileId(filename));
+        syncDataUnlocked(fileIdUnlocked(filename));
     }
 
     void syncData(const std::string& filename) const {
         const std::lock_guard lock(_mutex);
-        in_disk[filename] = in_cache[filename];
-        onSteps(1);
+        syncDataUnlocked(filename);
     }
 
     void crash() const {
         const std::lock_guard lock(_mutex);
-        in_cache = in_disk;
-        directories_in_cache = directories_in_disk;
+        crashUnlocked();
     }
 
     void syncDirectory(const std::string& path) const override {
         const std::lock_guard lock(_mutex);
         const auto directory = directoryPath(path);
         directories_in_disk[directory] = directories_in_cache[directory];
-        onSteps(1);
+        onStepsUnlocked(1);
     }
 
     void onSteps(std::size_t steps) const {
         const std::lock_guard lock(_mutex);
-        if (remaining_steps == 0 || steps == 0) {
-            return;
-        }
-        if (steps >= remaining_steps) {
-            remaining_steps = 0;
-            crash();
-            throw std::ios_base::failure("Injected filesystem crash");
-        }
-        remaining_steps -= steps;
+        onStepsUnlocked(steps);
     }
 
     // This filesystem must outlive the files it creates.
@@ -337,15 +320,12 @@ public:
 
     bool exists(const std::string& path) const override {
         const std::lock_guard lock(_mutex);
-        const auto directory = directories_in_cache.find(parentPath(path));
-        if (directory == directories_in_cache.end()) return false;
-        return std::any_of(directory->second.begin(), directory->second.end(),
-                           [&](const auto& entry) { return entry.path == path; });
+        return existsUnlocked(path);
     }
 
     bool isRegularFile(const std::string& path) const override {
         const std::lock_guard lock(_mutex);
-        return exists(path);
+        return existsUnlocked(path);
     }
 
     std::vector<std::string> list(const std::string& dir) const override {
@@ -360,15 +340,60 @@ public:
 
     void rename(const std::string& from, const std::string& to) const override {
         const std::lock_guard lock(_mutex);
-        const auto id = fileId(from);
+        const auto id = fileIdUnlocked(from);
         if (from == to) return;
-        remove(to);
-        remove(from);
+        removeUnlocked(to);
+        removeUnlocked(from);
         directories_in_cache[parentPath(to)].push_back({to, id});
     }
 
     void remove(const std::string& path) const override {
         const std::lock_guard lock(_mutex);
+        removeUnlocked(path);
+    }
+
+private:
+    // Call only while holding _mutex.
+    std::string fileIdUnlocked(const std::string& path) const {
+        const auto directory = directories_in_cache.find(parentPath(path));
+        if (directory != directories_in_cache.end()) {
+            for (const auto& entry : directory->second) {
+                if (entry.path == path) return entry.id;
+            }
+        }
+        throw std::ios_base::failure("In-memory file does not exist");
+    }
+
+    void syncDataUnlocked(const std::string& filename) const {
+        in_disk[filename] = in_cache[filename];
+        onStepsUnlocked(1);
+    }
+
+    void crashUnlocked() const {
+        in_cache = in_disk;
+        directories_in_cache = directories_in_disk;
+    }
+
+    void onStepsUnlocked(std::size_t steps) const {
+        if (remaining_steps == 0 || steps == 0) {
+            return;
+        }
+        if (steps >= remaining_steps) {
+            remaining_steps = 0;
+            crashUnlocked();
+            throw std::ios_base::failure("Injected filesystem crash");
+        }
+        remaining_steps -= steps;
+    }
+
+    bool existsUnlocked(const std::string& path) const {
+        const auto directory = directories_in_cache.find(parentPath(path));
+        if (directory == directories_in_cache.end()) return false;
+        return std::any_of(directory->second.begin(), directory->second.end(),
+                           [&](const auto& entry) { return entry.path == path; });
+    }
+
+    void removeUnlocked(const std::string& path) const {
         auto directory = directories_in_cache.find(parentPath(path));
         if (directory == directories_in_cache.end()) return;
         std::erase_if(directory->second, [&](const auto& entry) { return entry.path == path; });
