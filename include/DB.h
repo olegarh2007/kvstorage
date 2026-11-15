@@ -37,8 +37,8 @@ public:
     std::optional<std::string> get(const std::string& key);
     std::map<std::string, std::string> dump() const;
 private:
-    std::mutex put_mutex_;
-    std::shared_mutex put_get_mutex_;
+    mutable std::mutex put_mutex_;
+    mutable std::shared_mutex put_get_mutex_;
     std::shared_ptr<const FileSystem> _fileFactory;
     std::size_t _memtableMaxSize;
     SSTable::EntryMap _memtable;

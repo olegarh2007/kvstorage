@@ -58,7 +58,7 @@ public:
 
 private:
     std::string _path;
-    std::shared_ptr<const FileSystem> _fileFactory;
+    std::shared_ptr<const FileSystem> _fileSystem;
     std::unique_ptr<File> _out;
     std::size_t _size = 0;
 };

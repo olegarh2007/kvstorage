@@ -52,6 +52,7 @@ private:
     using Levels = std::map<std::uint64_t, std::uint64_t>;
     // Maps a level (not a file id) to its open file; copies share file ownership.
     using FilePool = std::map<std::uint64_t, std::shared_ptr<File>>;
+    using BloomFilters = std::unordered_map<std::uint64_t, BloomFilter>;
 public:
     struct PreparedFlush {
         Levels levels;
@@ -59,6 +60,7 @@ public:
         std::uint64_t nextId;
         std::vector<std::uint64_t> created;
         std::vector<std::uint64_t> obsolete;
+        BloomFilters bloomFilters;
     };
     PreparedFlush prepareFlush(const EntryMap& entries);
     void commitFlush(PreparedFlush& prepared);
@@ -70,7 +72,7 @@ private:
     // Exactly one open file per occupied MANIFEST level.
     FilePool files;
     // converts fileId to its BloomFilter
-    std::unordered_map<uint64_t, BloomFilter> bloom_filters_;
+    BloomFilters bloom_filters_;
 
     // Native byte order: uint64_t count, uint64_t offsets[count], sorted records.
     // Record: uint8_t added, uint64_t keySize, key bytes, and, if added,
@@ -82,6 +84,7 @@ private:
     std::filesystem::path namedPath(const std::string& name) const;
     std::filesystem::path sstFilePath(std::uint64_t id) const;
     std::shared_ptr<File> openFile(std::uint64_t id);
+    BloomFilters buildBloomFilters(const std::vector<std::uint64_t>& ids);
     void merge(File& older, File& newer, std::uint64_t output);
     std::optional<std::string> getThroughId(const std::string& key, std::uint64_t id) const;
 };

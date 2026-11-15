@@ -167,18 +167,9 @@ SSTable::SSTable(std::shared_ptr<const FileSystem> factory, std::string path)
         throw std::runtime_error("Unexpected data in MANIFEST");
     }
     for (const auto& [level, id] : levels) {
-        auto file = openFile(id);
-        file->seek(0);
-        const auto count = read<std::uint64_t>(*file);
-        BloomFilter filter(std::max<std::uint64_t>(1, count), 0.01);
-        Reader reader(*file);
-        while (reader.current) {
-            filter.add(reader.current->key);
-            reader.advance();
-        }
-        bloom_filters_.emplace(id, std::move(filter));
-        files.emplace(level, std::move(file));
+        files.emplace(level, openFile(id));
     }
+    bloom_filters_ = buildBloomFilters(ids);
 }
 
 std::filesystem::path SSTable::namedPath(const std::string& name) const {
@@ -209,10 +200,20 @@ void SSTable::writeManifest(std::uint64_t nextId, const Levels& newLevels) {
     _fileFactory->rename(namedPath("MANIFEST.tmp").string(), namedPath("MANIFEST").string());
 }
 
-static void fill_bloom_filter(BloomFilter &filter, const SSTable::EntryMap& entries) {
-    for (const auto& [key, value] : entries) {
-        filter.add(key);
+SSTable::BloomFilters SSTable::buildBloomFilters(const std::vector<std::uint64_t>& ids) {
+    BloomFilters filters;
+    for (const auto id : ids) {
+        auto file = openFile(id);
+        const auto count = read<std::uint64_t>(*file);
+        BloomFilter filter(std::max<std::uint64_t>(1, count), 0.01);
+        Reader reader(*file);
+        while (reader.current) {
+            filter.add(reader.current->key);
+            reader.advance();
+        }
+        filters.emplace(id, std::move(filter));
     }
+    return filters;
 }
 
 void SSTable::flush(const EntryMap& entries) {
@@ -222,7 +223,7 @@ void SSTable::flush(const EntryMap& entries) {
 
 SSTable::PreparedFlush SSTable::prepareFlush(const EntryMap& entries) {
     // Share unchanged files until MANIFEST commits; rollback keeps the old pool.
-    PreparedFlush prepared{levels, files, next_id, {}, {}};
+    PreparedFlush prepared{levels, files, next_id, {}, {}, {}};
     auto allocate = [&]() {
         if (prepared.nextId == std::numeric_limits<std::uint64_t>::max()) {
             throw std::runtime_error("SSTable file ids exhausted");
@@ -233,9 +234,6 @@ SSTable::PreparedFlush SSTable::prepareFlush(const EntryMap& entries) {
         auto current = allocate();
         save(sstFilePath(current), entries);
         prepared.created.push_back(current);
-
-        auto [it, _] = bloom_filters_.try_emplace(current, std::max<std::size_t>(1, entries.size()), 0.01);
-        fill_bloom_filter(it->second, entries);
 
         auto currentFile = openFile(current);
         std::uint64_t level = 0;
@@ -262,6 +260,7 @@ SSTable::PreparedFlush SSTable::prepareFlush(const EntryMap& entries) {
                 throw std::ios_base::failure("Failed to sync SSTable file");
             }
         }
+        prepared.bloomFilters = buildBloomFilters(prepared.created);
     } catch (...) {
         rollbackFlush(prepared);
         throw;
@@ -271,8 +270,12 @@ SSTable::PreparedFlush SSTable::prepareFlush(const EntryMap& entries) {
 
 void SSTable::commitFlush(PreparedFlush& prepared) {
     try {
+        bloom_filters_.merge(prepared.bloomFilters);
         writeManifest(prepared.nextId, prepared.levels);
     } catch (...) {
+        for (const auto id : prepared.created) {
+            bloom_filters_.erase(id);
+        }
         rollbackFlush(prepared);
         throw;
     }
@@ -290,8 +293,8 @@ void SSTable::commitFlush(PreparedFlush& prepared) {
 
 void SSTable::rollbackFlush(PreparedFlush& prepared) {
     prepared.files.clear();
+    prepared.bloomFilters.clear();
     for (const auto id : prepared.created) {
-        bloom_filters_.erase(id);
         _fileFactory->remove(sstFilePath(id).string());
     }
 }
@@ -326,11 +329,9 @@ void SSTable::merge(File& older, File& newer, std::uint64_t output) {
     write(file, count);
     const auto offset = sizeof(count) + count * sizeof(std::uint64_t);
     std::vector<std::uint64_t> offsets;
-    BloomFilter filter(std::max<std::uint64_t>(1, count), 0.01);
     offsets.reserve(count);
     file.seek(static_cast<off_t>(offset));
     mergeRecords(older, newer, [&](const Record& record) {
-        filter.add(record.key);
         offsets.push_back(static_cast<std::uint64_t>(file.tell()));
         writeRecord(file, record);
     });
@@ -341,7 +342,6 @@ void SSTable::merge(File& older, File& newer, std::uint64_t output) {
     if (file.close() != 0) {
         throw std::ios_base::failure("Failed to close SSTable file");
     }
-    bloom_filters_.emplace(output, std::move(filter));
 }
 
 std::optional<std::string> SSTable::get(const std::string& key) const {

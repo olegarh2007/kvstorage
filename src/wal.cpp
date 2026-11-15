@@ -51,9 +51,9 @@ bool readString(File& in, std::uint64_t& remaining, std::string& str) {
 Wal::Wal(std::string path,
          std::map<std::string, std::optional<std::string>>& map,
          std::shared_ptr<const FileSystem> factory)
-    : _path(std::move(path)), _fileFactory(std::move(factory)) {
-    if (_fileFactory->exists(_path)) {
-        auto in = _fileFactory->open(_path, "rb+");
+    : _path(std::move(path)), _fileSystem(std::move(factory)) {
+    if (_fileSystem->exists(_path)) {
+        auto in = _fileSystem->open(_path, "rb+");
         const auto fileSize = in->size();
         in->seek(0);
         auto remaining = static_cast<std::uint64_t>(fileSize);
@@ -88,14 +88,14 @@ Wal::Wal(std::string path,
         }
     }
 
-    _out = _fileFactory->open(_path, "ab");
+    _out = _fileSystem->open(_path, "ab");
 }
 
 void Wal::clear() {
     if (_out->close() != 0) {
         throw std::runtime_error("Failed to close WAL: " + _path);
     }
-    _out = _fileFactory->open(_path, "wb");
+    _out = _fileSystem->open(_path, "wb");
     if (_out->fsync() != 0) {
         throw std::runtime_error("Failed to sync cleared WAL: " + _path);
     }

@@ -43,6 +43,7 @@ std::optional<std::string> DB::get(const std::string& key) {
 }
 
 std::map<std::string, std::string> DB::dump() const {
+    std::lock_guard put_lock(put_mutex_);
     auto result = _sstable.dump();
     for (const auto& [key, entry] : _memtable) {
         if (entry) {
@@ -66,6 +67,9 @@ void DB::flushIfNeeded() {
     }
 
     _wal.clear();
-    _memtable.clear();
+    {
+        std::lock_guard get_lock(put_get_mutex_);
+        _memtable.clear();
+    }
 }
 
