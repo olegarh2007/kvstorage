@@ -89,6 +89,8 @@ Wal::Wal(std::string path,
     }
 
     _out = _fileSystem->open(_path, "ab");
+    const auto parent = std::filesystem::path(_path).parent_path();
+    _fileSystem->syncDirectory(parent.empty() ? "." : parent.string());
 }
 
 void Wal::clear() {

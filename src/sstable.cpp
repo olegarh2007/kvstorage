@@ -198,6 +198,8 @@ void SSTable::writeManifest(std::uint64_t nextId, const Levels& newLevels) {
         throw std::ios_base::failure("Failed to close MANIFEST");
     }
     _fileFactory->rename(namedPath("MANIFEST.tmp").string(), namedPath("MANIFEST").string());
+    const auto parent = namedPath("MANIFEST").parent_path();
+    _fileFactory->syncDirectory(parent.empty() ? "." : parent.string());
 }
 
 SSTable::BloomFilters SSTable::buildBloomFilters(const std::vector<std::uint64_t>& ids) {
@@ -276,7 +278,8 @@ void SSTable::commitFlush(PreparedFlush& prepared) {
         for (const auto id : prepared.created) {
             bloom_filters_.erase(id);
         }
-        rollbackFlush(prepared);
+        // Directory sync may fail after publishing MANIFEST. Keep its files:
+        // deleting them here could leave the recovered manifest dangling.
         throw;
     }
     levels.swap(prepared.levels);
