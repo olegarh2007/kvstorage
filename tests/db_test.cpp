@@ -4,6 +4,7 @@
 
 #include "DB.h"
 
+#include <algorithm>
 #include <random>
 
 #include "gtest/gtest.h"
@@ -75,6 +76,19 @@ TEST(db, GetMemtable) {
     db.put("a", "b");
     EXPECT_EQ(db.get("a"), "b");
 }
+
+TEST(db, WalRemainsInDirectoryAfterCrashImmediatelyAfterCreation) {
+    auto fs = std::make_shared<MemFS>();
+    DB db("dir/test", fs);
+
+    fs->crash();
+
+    const auto files = fs->list("dir");
+    EXPECT_NE(std::find(files.begin(), files.end(), "dir/test.wal"), files.end());
+    EXPECT_TRUE(fs->isRegularFile("dir/test.wal"));
+}
+
+
 
 TEST(db, GetWal) {
     auto fs = std::make_shared<MemFS>();

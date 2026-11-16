@@ -3,8 +3,48 @@
 //
 
 #include "sstable.h"
+#include "DB.h"
 
 #include "gtest/gtest.h"
+
+#include <algorithm>
+
+TEST(SSTable, ManifestRemainsInDirectoryAfterCreationAndFlush) {
+    const auto fs = std::make_shared<MemFS>();
+    const std::string manifest_path = "dir/test.MANIFEST";
+    const auto read_manifest = [&]() {
+        auto manifest = fs->open(manifest_path, "r");
+        std::string content(static_cast<std::size_t>(manifest->size()), '\0');
+        manifest->read(content.data(), content.size());
+        return content;
+    };
+
+    {
+        DB db("dir/test", fs, 1);
+        ASSERT_TRUE(fs->isRegularFile(manifest_path));
+    }
+    const auto initial_manifest = read_manifest();
+
+    fs->crash();
+
+    ASSERT_TRUE(fs->isRegularFile(manifest_path));
+    EXPECT_EQ(read_manifest(), initial_manifest);
+
+    {
+        DB db("dir/test", fs, 1);
+        db.put("key", "value"); // One WAL record triggers a flush.
+    }
+    const auto flushed_manifest = read_manifest();
+    EXPECT_NE(flushed_manifest, initial_manifest);
+
+    fs->crash();
+
+    ASSERT_TRUE(fs->isRegularFile(manifest_path));
+    EXPECT_EQ(read_manifest(), flushed_manifest);
+    EXPECT_NE(read_manifest(), initial_manifest);
+    DB restored("dir/test", fs, 1);
+    EXPECT_EQ(restored.get("key"), "value");
+}
 
 TEST(SSTable, FlushTwoEntryMaps) {
     const auto fs = std::make_shared<MemFS>();
@@ -27,13 +67,21 @@ TEST(SSTable, FlushTwoEntryMaps) {
         {"plum", "purple"},
     };
 
-    SSTable ss_table(fs);
-    ss_table.flush(older);
-    ss_table.flush(newer);
-
-    EXPECT_EQ(ss_table.dump(), expected);
-    auto dir_content = fs->list(".");
-    EXPECT_EQ(fs->list("."), (std::vector<std::string>{"2.sst", "MANIFEST"}));
+    {
+        SSTable ss_table(fs);
+        ss_table.flush(older);
+        ss_table.flush(newer);
+    }
+    fs->crash();
+    {
+        SSTable ss_table(fs);
+        EXPECT_EQ(ss_table.dump(), expected);
+        auto dir_content = fs->list(".");
+        for (const auto& filename : std::vector<std::string>{"2.sst", "MANIFEST"}) {
+            EXPECT_NE(std::find(dir_content.begin(), dir_content.end(), filename), dir_content.end())
+                << "Missing file: " << filename;
+        }
+    }
 }
 
 TEST(SSTable, FlushCrashConsistent) {
