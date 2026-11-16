@@ -55,14 +55,14 @@ TEST(db, Put) {
         return true;
     };
     {
-        int i = 0;
+        int i = 1;
         // testing put not overlows wal
         while (!test(i, MEMTABLE_MAX_SIZE - 2)) {
             ++i;
         }
     }
     {
-        int i = 0;
+        int i = 1;
         // testing put overflows wal
         while (!test(i, MEMTABLE_MAX_SIZE - 1)) {
             ++i;
