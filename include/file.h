@@ -285,21 +285,20 @@ public:
         return in_cache[fileIdUnlocked(filename)];
     }
 
+    // переносит все изменения, которые хранятся в файловом кэше ядра
+    // в долговечное хранение на диск
     void fsync(const std::string& filename) const {
         const std::lock_guard lock(_mutex);
         syncDataUnlocked(fileIdUnlocked(filename));
     }
 
-    void syncData(const std::string& filename) const {
-        const std::lock_guard lock(_mutex);
-        syncDataUnlocked(filename);
-    }
-
+    // симулирует потерю недолговечных изменений
     void crash() const {
         const std::lock_guard lock(_mutex);
         crashUnlocked();
     }
 
+    // переносит все изменения произошедшие в директории в долговечный вид
     void syncDirectory(const std::string& path) const override {
         const std::lock_guard lock(_mutex);
         const auto directory = directoryPath(path);
@@ -307,6 +306,8 @@ public:
         onStepsUnlocked(1);
     }
 
+    // задает количество операций(исключения write(n),read(n) - n операций)
+    // после которых произойдет "сбой"-выброс исключения
     void onSteps(std::size_t steps) const {
         const std::lock_guard lock(_mutex);
         onStepsUnlocked(steps);
@@ -323,6 +324,7 @@ public:
         return existsUnlocked(path);
     }
 
+    //
     bool isRegularFile(const std::string& path) const override {
         const std::lock_guard lock(_mutex);
         return existsUnlocked(path);
@@ -364,8 +366,8 @@ private:
         throw std::ios_base::failure("In-memory file does not exist");
     }
 
-    void syncDataUnlocked(const std::string& filename) const {
-        in_disk[filename] = in_cache[filename];
+    void syncDataUnlocked(const std::string& fileId) const {
+        in_disk[fileId] = in_cache[fileId];
         onStepsUnlocked(1);
     }
 

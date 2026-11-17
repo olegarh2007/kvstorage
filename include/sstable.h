@@ -43,6 +43,8 @@ public:
     // среди всех файлов то возвращается std::nullopt
     //
     // гарантируется что файлы не повредятся
+    //
+    // При ошибке чтения выбрасывает исключение.
     std::optional<std::string> get(const std::string& key) const;
     // отдает все ключ-значение содержащиеся в базе, хранящиеся в SSTable
     std::map<std::string, std::string> dump() const;

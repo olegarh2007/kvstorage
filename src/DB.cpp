@@ -11,9 +11,7 @@ DB::DB(const std::string& path, std::shared_ptr<const FileSystem> factory,
     : _fileFactory(std::move(factory)),
       _memtableMaxSize(memtable_max_size),
       _sstable(_fileFactory, path),
-      _wal(path + ".wal", _memtable, _fileFactory) {
-    flushIfNeeded();
-}
+      _wal(path + ".wal", _memtable, _fileFactory) {}
 
 // если пут вернулся успешно то и вал.аппенд вернулся успешно
 // а значит на диске останется корректная копия =>
@@ -25,25 +23,39 @@ DB::DB(const std::string& path, std::shared_ptr<const FileSystem> factory,
 // по контракту сстейбл операция которая успешно сброщена в сстейбл восстановима
 void DB::put(std::string key, std::optional<std::string> value) {
     std::lock_guard lock(put_mutex_);
-    _wal.append(key, value);
-    {
-        std::lock_guard get_lock(put_get_mutex_);
-        _memtable.insert_or_assign(std::move(key), std::move(value));
+    checkFailed();
+    try {
+        _wal.append(key, value);
+        {
+            std::lock_guard get_lock(put_get_mutex_);
+            checkFailed();
+            _memtable.insert_or_assign(std::move(key), std::move(value));
+        }
+        flushIfNeeded();
+    } catch (...) {
+        failed_ = true;
+        throw;
     }
-    flushIfNeeded();
 }
 
 std::optional<std::string> DB::get(const std::string& key) {
     std::shared_lock put_lock(put_get_mutex_);
-    const auto entry = _memtable.find(key);
-    if (entry != _memtable.end()) {
-        return entry->second;
+    checkFailed();
+    try {
+        const auto entry = _memtable.find(key);
+        if (entry != _memtable.end()) {
+            return entry->second;
+        }
+        return _sstable.get(key);
+    } catch (...) {
+        failed_ = true;
+        throw;
     }
-    return _sstable.get(key);
 }
 
 std::map<std::string, std::string> DB::dump() const {
     std::lock_guard put_lock(put_mutex_);
+    checkFailed();
     auto result = _sstable.dump();
     for (const auto& [key, entry] : _memtable) {
         if (entry) {
@@ -53,6 +65,12 @@ std::map<std::string, std::string> DB::dump() const {
         }
     }
     return result;
+}
+
+void DB::checkFailed() const {
+    if (failed()) {
+        throw FailedError();
+    }
 }
 
 void DB::flushIfNeeded() {

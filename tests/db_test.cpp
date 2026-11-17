@@ -14,16 +14,6 @@ constexpr std::size_t MEMTABLE_MAX_SIZE = 3;
 }
 
 TEST(db, Put) {
-    auto check_old = [](const std::shared_ptr<MemFS>& fs) {
-        DB db("test", fs, MEMTABLE_MAX_SIZE);
-        const std::map<std::string, std::string> expected = {{"a", "b"}};
-        return db.dump() == expected;
-    };
-    auto check_new = [](const std::shared_ptr<MemFS>& fs) {
-        DB db("test", fs, MEMTABLE_MAX_SIZE);
-        const std::map<std::string, std::string> expected = {{"a", "b"}, {"c", "d"}};
-        return db.dump() == expected;
-    };
     auto check_old_db = [](const DB& db) {
         const std::map<std::string, std::string> expected = {{"a", "b"}};
         return db.dump() == expected;
@@ -45,13 +35,22 @@ TEST(db, Put) {
         } catch (...) {
             failed = true;
         }
+        // Inject failures only into put, not into the recovery checks below.
+        fs->setSteps(0);
         if (failed) {
-            EXPECT_TRUE(check_old(fs) || check_new(fs));
+            EXPECT_TRUE(db.failed());
+            EXPECT_THROW(db.put("blocked", "value"), DB::FailedError);
+            EXPECT_THROW(db.get("a"), DB::FailedError);
+            EXPECT_THROW(db.dump(), DB::FailedError);
+            DB restored("test", fs, MEMTABLE_MAX_SIZE);
+            EXPECT_FALSE(restored.failed());
+            EXPECT_TRUE(check_old_db(restored) || check_new_db(restored));
             return false;
         }
         EXPECT_TRUE(check_new_db(db));
         fs->crash();
-        EXPECT_TRUE(check_new(fs));
+        DB restored("test", fs, MEMTABLE_MAX_SIZE);
+        EXPECT_TRUE(check_new_db(restored));
         return true;
     };
     {
@@ -75,6 +74,36 @@ TEST(db, GetMemtable) {
     DB db("test", fs);
     db.put("a", "b");
     EXPECT_EQ(db.get("a"), "b");
+    EXPECT_EQ(db.get("missing"), std::nullopt);
+    EXPECT_FALSE(db.failed());
+}
+
+TEST(db, GetFailureRequiresReopen) {
+    auto fs = std::make_shared<MemFS>();
+    DB db("test", fs, 1);
+    db.put("a", "b");
+
+    // Damage the cached SSTable to force a read failure. Durable data survives.
+    bool damaged = false;
+    for (const auto& path : fs->list(".")) {
+        if (path.ends_with(".sst")) {
+            fs->open(path, "rb+")->truncate(0);
+            damaged = true;
+        }
+    }
+    ASSERT_TRUE(damaged);
+    EXPECT_THROW(db.get("a"), std::runtime_error);
+    EXPECT_TRUE(db.failed());
+    EXPECT_THROW(db.get("missing"), DB::FailedError);
+    EXPECT_THROW(db.put("c", "d"), DB::FailedError);
+    EXPECT_THROW(db.dump(), DB::FailedError);
+
+    fs->crash();
+    DB restored("test", fs, 1);
+    EXPECT_FALSE(restored.failed());
+    EXPECT_EQ(restored.get("a"), "b");
+    restored.put("c", "d");
+    EXPECT_EQ(restored.get("c"), "d");
 }
 
 TEST(db, WalRemainsInDirectoryAfterCrashImmediatelyAfterCreation) {

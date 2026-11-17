@@ -130,3 +130,58 @@ TEST(WAL, Size) {
     recovered.append("key3", "value3");
     EXPECT_EQ(recovered.size(), 5);
 }
+
+TEST(WAL, ReplayTruncatesIncompleteTail) {
+    // Build the input independently of Wal::append, using the on-disk format.
+    const auto encodeString = [](std::string_view value) {
+        const std::uint64_t size = value.size();
+        std::string bytes(reinterpret_cast<const char*>(&size), sizeof(size));
+        bytes.append(value);
+        return bytes;
+    };
+    const auto put = [&](std::string_view key, std::string_view value) {
+        return std::string(1, '\x01') + encodeString(key) + encodeString(value);
+    };
+    const auto remove = [&](std::string_view key) {
+        return std::string(1, '\x02') + encodeString(key);
+    };
+    const std::string complete = put("key", "old") + put("empty", "") +
+        put("deleted", "value") + remove("deleted") + put("key", "new");
+    const std::map<std::string, std::optional<std::string>> expected = {
+        {"key", "new"}, {"empty", ""}, {"deleted", std::nullopt},
+    };
+
+    // Try every incomplete prefix, including cuts inside lengths and payloads.
+    for (const auto& lastRecord : {put("key", "unfinished"), remove("key")}) {
+        for (std::size_t tailSize = 1; tailSize < lastRecord.size(); ++tailSize) {
+            SCOPED_TRACE(::testing::Message()
+                         << "operation=" << static_cast<int>(lastRecord.front())
+                         << ", tail size=" << tailSize);
+            const auto fs = std::make_shared<MemFS>();
+            const std::string filename = "testfile";
+            const std::string content = complete + lastRecord.substr(0, tailSize);
+            {
+                auto file = fs->open(filename, "wb");
+                file->write(content.data(), content.size());
+                ASSERT_EQ(file->close(), 0);
+            }
+
+            std::map<std::string, std::optional<std::string>> restored;
+            {
+                Wal recovered(filename, restored, fs);
+                EXPECT_EQ(restored, expected);
+                EXPECT_EQ(recovered.size(), 5);
+                // Check the file itself: ignoring the tail during replay is insufficient.
+                EXPECT_EQ(fs->get(filename), complete);
+            }
+
+            restored.clear();
+            Wal reopened(filename, restored, fs);
+            EXPECT_EQ(restored, expected);
+            EXPECT_EQ(reopened.size(), 5);
+            EXPECT_EQ(fs->get(filename), complete);
+        }
+    }
+}
+
+

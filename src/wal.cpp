@@ -122,9 +122,6 @@ void Wal::append(std::string_view key, std::optional<std::string_view> value) {
         writeString(*_out, *value);
     }
 
-    if (_out->flush() != 0) {
-        throw std::runtime_error("Failed to flush WAL: " + _path);
-    }
     ++_size;
 
     if (_out->fsync() != 0) {

@@ -4,18 +4,29 @@
 
 #ifndef KVSTORAGE_DB_H
 #define KVSTORAGE_DB_H
+#include <atomic>
 #include <cstddef>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
 #include <string>
+#include <stdexcept>
 
 #include "sstable.h"
 #include "wal.h"
 
 class DB {
 public:
+    class FailedError : public std::runtime_error {
+    public:
+        FailedError() : std::runtime_error("DB has failed; reopen the database before performing operations") {}
+    };
+
+    // Any exception from put/get marks this instance as failed. The original
+    // exception is rethrown; subsequent put/get/dump calls throw FailedError.
+    bool failed() const noexcept { return failed_.load(); }
+
     // File prefix: path.wal, path.MANIFEST, path.<id>.sst.
     // The parent directory must already exist.
     // Flush after memtable_max_size WAL records, including repeated keys.
@@ -37,6 +48,8 @@ public:
     std::optional<std::string> get(const std::string& key);
     std::map<std::string, std::string> dump() const;
 private:
+    std::atomic<bool> failed_{false};
+    void checkFailed() const;
     mutable std::mutex put_mutex_;
     mutable std::shared_mutex put_get_mutex_;
     std::shared_ptr<const FileSystem> _fileFactory;
